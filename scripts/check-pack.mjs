@@ -10,7 +10,9 @@ if (result.status !== 0) {
   process.exit(result.status ?? 1)
 }
 
-const [manifest] = JSON.parse(result.stdout)
+const parsed = JSON.parse(result.stdout)
+const manifest = Array.isArray(parsed) ? parsed[0] : parsed['dsh-codex-connect'] ?? Object.values(parsed)[0]
+if (manifest === undefined || !Array.isArray(manifest.files)) throw new TypeError('npm pack --json returned an unsupported manifest shape')
 const names = manifest.files.map(file => file.path)
 const required = ['LICENSE', 'NOTICE', 'README.md', 'package.json', 'compatibility.json', 'cordis.patch.yml', 'lib/index.js', 'lib/index.d.ts', 'lib/client.js', 'lib/bin.js']
 for (const name of required) {
