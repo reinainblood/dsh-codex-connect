@@ -5,7 +5,7 @@ import { decodeOpenAICodexModelCatalog, isValidOpenAICodexContextBudget, openAIC
 
 describe('model-specific configuration ceilings', () => {
   it.each([
-    ['gpt-5.6-sol', 272_000, 872_000],
+    ['gpt-5.6-sol', 272_000, 1_000_000],
     ['gpt-5.6-terra', 272_000, 872_000],
     ['gpt-5.6-luna', 272_000, 872_000],
     ['gpt-5.4', 272_000, 1_000_000],
@@ -35,7 +35,7 @@ describe('model-specific configuration ceilings', () => {
   })
 
   it('rejects provider overrides above the ceiling even without Host settings', () => {
-    expect(() => withOpenAICodexContextWindowOverrides(openaiCodexProvider(), { 'gpt-5.6-sol': 872_001 })).toThrow('integer from 1 to 872000')
+    expect(() => withOpenAICodexContextWindowOverrides(openaiCodexProvider(), { 'gpt-5.6-sol': 1_000_001 })).toThrow('integer from 1 to 1000000')
   })
 
   it('round-trips detached catalog defaults and refuses incomplete or invalid wire limits', () => {

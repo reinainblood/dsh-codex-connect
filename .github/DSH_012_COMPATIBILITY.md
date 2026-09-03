@@ -20,6 +20,8 @@ covered by this branch.
   settings-service surface.
 - Retain Alpha 4.25's Models account card, modular Plugin settings, server-driven
   quota windows, proxy workflow, compatibility diagnostics, and Auto-review UI.
+- Preserve the verified 1,000,000-token GPT-5.6 Sol client budget already used
+  by this Desktop profile; other model ceilings remain unchanged.
 - Serve a fork-owned verified compatibility catalog so the update card evaluates
   the tested fork/runtime pair instead of applying upstream Alpha 4.25's
   alpha.5-only record.
