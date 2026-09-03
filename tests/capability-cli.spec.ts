@@ -18,7 +18,7 @@ describe('assembled capability CLI', () => {
     await writeFile(join(root, '.openai-codex-auth.json'), 'invalid-private-credential', { mode: 0o600 })
     let output = ''
     vi.spyOn(process.stdout, 'write').mockImplementation(chunk => { output += String(chunk); return true })
-    expect(await run(['capabilities', '--model', 'gpt-5.6-sol'])).toBe(2)
+    expect(await run(['capabilities', '--model', 'gpt-5.6-sol'])).toBe(1)
     expect(output).toMatchSnapshot()
     expect(output).not.toContain(root)
     expect(output).not.toContain('invalid-private-credential')
@@ -32,6 +32,16 @@ describe('assembled capability CLI', () => {
     expect(await run(['capabilities', '--model', 'gpt-5.6-sol', '--probe', '--json'])).toBe(1)
     const report = JSON.parse(output)
     expect(report).toMatchObject({ scope: 'standalone-route-only', probe: { state: 'skipped' }, checks: { oauth: { status: 'rejected' }, responses: { status: 'unknown' } } })
+    expect(output).not.toContain(root)
+  })
+
+  it('uses the real reviewer command to stay offline when signed out', async () => {
+    root = await mkdtemp(join(tmpdir(), 'codex-capabilities-'))
+    vi.stubEnv('DSH_HOME', root)
+    let output = ''
+    vi.spyOn(process.stdout, 'write').mockImplementation(chunk => { output += String(chunk); return true })
+    expect(await run(['auto-review-probe', '--json'])).toBe(1)
+    expect(JSON.parse(output)).toMatchObject({ scope: 'auto-review-route-only', probe: { state: 'skipped' }, checks: { oauth: { status: 'rejected' }, reviewer: { status: 'unknown' } } })
     expect(output).not.toContain(root)
   })
 

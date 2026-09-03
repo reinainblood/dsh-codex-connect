@@ -9,6 +9,7 @@ import LlmRuntime from '@deepseek-ai/dsh-llm'
 import * as PiAiRuntime from '@deepseek-ai/dsh-llm-pi-ai'
 import SettingsProvider from '@deepseek-ai/dsh-settings'
 import type { SettingsNamespace } from '@deepseek-ai/dsh-settings'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import WebRuntime from '@deepseek-ai/dsh-web'
@@ -54,7 +55,7 @@ describe('OpenAI Codex Host settings integration', () => {
     await ctx.plugin(LocalFileSystem, { cwd: workspace })
     await ctx.plugin(LocalAttachmentStore, { dshHome: root })
     await ctx.plugin(MemorySettings)
-    const plugin = await ctx.plugin(OpenAICodex, {})
+    const plugin = await ctx.plugin(OpenAICodex, { oauthTimeoutMs: 120_000 })
 
     expect(ctx.llm.listConfigurableProviders()).toContainEqual({
       provider: 'openai-codex',
@@ -64,11 +65,16 @@ describe('OpenAI Codex Host settings integration', () => {
       declared: false,
     })
     const descriptor = ctx.settings.describe().find(entry => entry.ns === OpenAICodex.OPENAI_CODEX_SETTINGS_NS)
-    expect(descriptor?.value).toEqual(OpenAICodex.DEFAULT_OPENAI_CODEX_SETTINGS)
+    expect(descriptor?.value).toEqual({ ...OpenAICodex.DEFAULT_OPENAI_CODEX_SETTINGS, oauthTimeoutMs: 120_000 })
     const fullCatalog = await ctx.llm.listModels(OpenAICodex.OPENAI_CODEX_PROVIDER)
     expect(fullCatalog.length).toBeGreaterThan(2)
     expect(ctx.tools.get(OpenAICodex.VIEW_IMAGE_TOOL_NAME)).toBeUndefined()
     expect(ctx.tools.get(OpenAICodex.IMAGE_GENERATE_TOOL_NAME)).toBeUndefined()
+    const approvalAgent = { id: 'settings-approval-fixture' } as unknown as Agent
+    await expect(ctx.waterfall('approval/request', {
+      agent: approvalAgent,
+      toolName: 'fixture',
+    }, async () => 'allowed-once')).resolves.toBe('allowed-once')
     await expect(ctx.web.search({ query: 'disabled' })).rejects.toMatchObject({ code: 'WEB_PROVIDER_UNAVAILABLE' })
 
     await ctx.settings.update(OpenAICodex.OPENAI_CODEX_SETTINGS_NS, {
@@ -104,6 +110,8 @@ describe('OpenAI Codex Host settings integration', () => {
       expect(ctx.tools.get(OpenAICodex.IMAGE_GENERATE_TOOL_NAME)).toBeUndefined()
     })
     await expect(ctx.web.search({ query: 'disabled again' })).rejects.toMatchObject({ code: 'WEB_PROVIDER_UNAVAILABLE' })
+    expect(ctx.settings.describe().find(entry => entry.ns === OpenAICodex.OPENAI_CODEX_SETTINGS_NS)?.value)
+      .toMatchObject({ oauthTimeoutMs: 120_000 })
 
     await plugin.dispose()
     expect(ctx.llm.listConfigurableProviders()).toContainEqual({

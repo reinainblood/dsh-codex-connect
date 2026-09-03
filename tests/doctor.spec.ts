@@ -27,7 +27,9 @@ describe('Codex Connect doctor', () => {
       changesHarnessDefaultModel: false,
       changesHarnessSearchRoute: false,
     })
-    expect(report.compatibility.status).toBe('compatible')
+    // Development dependencies track upstream Alpha 4.25; the separately
+    // exercised Desktop profile supplies the fork's alpha.1 runtime contract.
+    expect(report.compatibility.status).toBe('incompatible')
   })
 
   it('uses metadata only and never returns credential content', async () => {
@@ -60,7 +62,7 @@ describe('Codex Connect doctor', () => {
       },
     })
     expect(report.compatibility.status).toBe('incompatible')
-    expect(report.hints.join('\n')).toMatch(/pin @earendil-works\/pi-ai to 0\.82\.1/)
+    expect(report.hints.join('\n')).toMatch(/@earendil-works\/pi-ai 0\.84\.3/)
   })
 
   it('reports unknown compatibility without pretending it is supported', async () => {

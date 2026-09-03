@@ -6,11 +6,19 @@ English | [中文](docs/README.zh.md)
 
 Connect your ChatGPT subscription to DeepSeek Harness with OAuth, optional GPT Image generation, user-controlled defaults, Harness-native approvals, diagnostics, and reliable session recovery.
 
+> **Fork compatibility build for DSH Desktop 2.0.4.** The
+> `codex/dsh-desktop-2.0.4-alpha425` branch carries the Alpha 4.25 plugin
+> features while targeting the exact DSH `0.1.2-alpha.1`, pi-ai `0.84.3`,
+> Cordis `4.0.1` runtime bundled by DSH Desktop 2.0.4. Use upstream's tagged
+> Alpha 4.25 package for its official DSH `0.1.2-alpha.5` pairing; this branch
+> exists only for the older Desktop host and must be revalidated before use
+> with another DSH version.
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/franksong2702/dsh-codex-connect/main/docs/assets/en/hero.jpg" alt="Codex Connect — ChatGPT OAuth for DeepSeek Harness" width="100%">
 </p>
 
-`dsh-codex-connect` adds the `openai-codex` model catalog and a separate ChatGPT OAuth login. Models run through Harness's normal LLM service, so streaming, tool calls, reasoning replay, compaction, filesystem controls, permission gates, and approval prompts remain Harness-owned. It does not turn a ChatGPT subscription into an OpenAI Platform API credential. When an eligible GPT Codex model is selected, the Composer also shows a conversation-scoped Fast Mode toggle and a compact weekly-quota indicator.
+`dsh-codex-connect` adds the `openai-codex` model catalog and a separate ChatGPT OAuth login. Models run through Harness's normal LLM service, so streaming, tool calls, reasoning replay, compaction, filesystem controls, permission gates, and approval prompts remain Harness-owned. It does not turn a ChatGPT subscription into an OpenAI Platform API credential. When an eligible GPT Codex model is selected, the Composer also shows a conversation-scoped Fast Mode toggle and compact server-reported quota bars.
 
 Installation is additive. The bundle does not replace the current default model or search route. Standalone search, `view_image`, and image generation remain disabled until explicitly enabled.
 
@@ -18,33 +26,32 @@ The setup and image-result screenshots in this English guide are captured from t
 
 ## Quick start (about five minutes)
 
-This guide uses the `web` profile. Replace `web` with the name of the Harness profile you already use. You need a working `dsh` installation; from a DeepSeek Harness source checkout, prefix the commands with `pnpm`.
+This quick start targets DSH `0.1.2-alpha.5` with Codex Connect Alpha 4.25. Check `dsh --version` first. For DSH `0.1.2-alpha.2`, `0.1.1-rc.2`, or `0.1.0-rc.7`, select the matching plugin version in [INSTALL.md](INSTALL.md). This guide uses the `web` profile; replace `web` with the name of the Harness profile you already use. From a DeepSeek Harness source checkout, prefix the commands with `pnpm`.
 
 ### 1. Install the plugin into one profile
 
 ```sh
-dsh plugin --profile web add dsh-codex-connect@alpha
+dsh plugin --profile web add dsh-codex-connect@0.1.0-alpha.4.25
 ```
 
 Expected result: the package is added to that profile. This does not change the profile's default model or global search route.
 
-To reproduce this release exactly, use `dsh plugin --profile web add dsh-codex-connect@0.1.0-alpha.4.21`. If npm is unavailable after the matching GitHub prerelease exists, use `dsh plugin --profile web add 'github:franksong2702/dsh-codex-connect#v0.1.0-alpha.4.21'`. A local checkout can be installed as `link:/absolute/path/to/dsh-codex-connect`.
+Use the exact version above to keep the verified DSH and plugin pair reproducible. `alpha` is a moving npm tag, not a compatibility guarantee.
 
-### What's new in Alpha 4.21
+### What's new in Alpha 4.25
 
-- Preserve and download the exact generated image separately from the conversation preview, including from restored sessions and forks that inherited the image result.
-- Inspect runtime and Responses/SSE evidence with the opt-in `capabilities` command. Network probing requires explicit `--probe`; it does not enable unsupported features or alter routing.
-- Use clearer exact-version installation guidance and expanded release/canary CI checks. The supported DSH version remains `0.1.1-rc.2`.
+- Show the exact 5-hour and weekly quota windows returned by ChatGPT for the selected Codex model. Missing windows stay hidden, Spark remains separate, and plan names do not suppress server data.
+- Separate verified compatibility from maintainer follow-up. The settings card no longer treats missing verification as a known runtime failure or recommends a plugin downgrade.
+- Link users to the canonical tracker for their DSH version when one exists, with a prefilled compatibility-gap report as the safe fallback.
+- Track every newer DSH candidate through one Canary issue with explicit preliminary, compatibility-failure, or infrastructure-blocked state. Canary success does not declare support or publish anything.
 
 ### Version updates
 
-Codex Connect checks public package metadata and this repository's `verified-compatibility.json` periodically through the DSH Web server. The same card reads the locally loaded DSH package version, shows it beside the latest DSH version recorded by this project, and evaluates the exact installed plugin and DSH version pair. Local version detection uses package metadata already available to the plugin and does not require a DSH Core change.
+Codex Connect checks public package metadata and this repository's `verified-compatibility.json` periodically through the DSH Web server. The same card reads the locally loaded DSH package version, shows it beside the latest DSH version recorded by this project, and evaluates the exact installed plugin and DSH version pair. Local version detection uses package metadata already available to the plugin and does not require a DSH Core change. The card's optional tracker lookup sends only that public DSH version to GitHub's public search API.
 
-The compatibility record lists exact plugin and DSH versions rather than assuming every later release remains compatible. Maintainers can add a newly verified DSH version to the repository file without publishing another plugin release. A green result means the installed pair was verified; yellow means the latest plugin was verified with the installed DSH version and should be installed first; red means the installed DSH version is known but neither the installed plugin nor the latest published plugin has a matching record; gray means the installed DSH version is not recorded or the public record could not be checked. A red result includes a prefilled GitHub issue link for the installed DSH version so users can remind the maintainer without composing a report from scratch.
+The compatibility record lists exact plugin and DSH versions rather than assuming every later release remains compatible. Maintainers can add a newly verified DSH version to the repository file without publishing another plugin release. The card keeps two decisions separate: its status describes only whether the installed pair or a specific upgrade path has been verified, while its GitHub action appears only when the installed latest-or-newer DSH has no verified published plugin. Missing verification never claims that a pair is known to fail. A green result means the installed pair was verified. Yellow recommends updating the plugin when the latest plugin matches the installed DSH, or updating DSH when the latest plugin matches the latest verified DSH. Red means Codex Connect has not caught up with the installed latest-or-newer DSH; it links to the canonical compatibility tracker when one exists, or offers a prefilled compatibility-gap report when the tracker lookup is unavailable or has no match. Gray means an older DSH version is not recorded or the public record could not be checked.
 
-When a newer plugin version is available, a frame-wide DSH notice appears even if you switch conversations. It first shows the user-facing changes between your installed version and the newest version; technical release notes are available as a secondary detail, or from the release page. The plugin never runs an upgrade command by itself.
-
-The notice first summarizes the user-facing changes between your installed version and the newest version. Technical release notes remain available as a secondary detail. To update, copy the short request shown in the notice to the Agent you use for this DSH project. The Agent can inspect the project instructions and choose the appropriate install or update method; the plugin does not execute anything on your behalf.
+When a newer plugin version is available, a frame-wide DSH notice appears even if you switch conversations. It first shows the user-facing changes between your installed version and the newest version; technical release notes remain available as a secondary detail or from the release page. To update, copy the short request shown in the notice to the Agent you use for this DSH project. The Agent can inspect the project instructions and choose the appropriate install or update method; the plugin never runs an upgrade command itself.
 
 After the Agent reports completion, return to the notice or settings card and select **Done — check again**. If the running process still reports the old version, restart that profile's DSH Web process and check again.
 
@@ -64,11 +71,17 @@ dsh web
 
 Expected result: the Harness web UI opens for the selected profile.
 
-### 3. Find the Codex Connect card
+### 3. Find the Openai-Codex account card
 
-Open **Settings → Plugins → Plugin configuration → Codex Connect**.
+Open **Settings → Models** and find **Openai-Codex**. This is the primary Alpha 4.25 account entry. If the profile does not expose the Models settings section, open **Settings → Plugins → Plugin configuration → Codex Connect** instead.
 
-Expected result: a fresh installation shows **Not signed in** and a **Sign in with ChatGPT** button. The card is where you later manage optional capabilities too.
+The Models card carries the attribution “Powered by the Codex Connect plugin.” and provides ChatGPT authorization, reauthorization, sign-out and quota. Both settings pages share one in-memory account state and polling owner. **More settings** opens the proxy, model visibility, search, image and context-budget configuration form in a dialog; the original Plugin settings entry remains available. Both entries save to the same settings scope. Close or Escape discards unsaved dialog edits. The Models footer is optional: profiles without that settings section retain the existing Plugin entry.
+
+The compact Models row shows **Authorize** when signed out, or **Sign out** and **View quota** when signed in. Expanding quota shows only the server-reported usage rows, without repeating account controls. If browser authorization is interrupted, use **Continue authorization** in Models (**Reopen authorization** in Plugins) to resume the pending login, or **Cancel sign-in** and retry from either settings page or another trusted browser. Cancellation preserves an existing signed-in account. An abandoned authorization expires after 10 minutes by default; the plugin's `oauthTimeoutMs` configuration accepts 1,000–1,800,000 milliseconds and applies when the plugin loads. The separate 30-second wait for the initial authorization URL remains bounded. Neither cancellation nor expiry restarts DSH.
+
+Expected result: a fresh installation shows **Authorize** in Models. The Plugin configuration fallback shows **Not signed in** and **Sign in with ChatGPT**.
+
+The screenshot below shows the retained Plugin configuration fallback.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/franksong2702/dsh-codex-connect/main/docs/assets/en/plugin-entry.jpg" alt="Collapsed English-localized Codex Connect entry under Harness plugin configuration" width="586">
@@ -76,9 +89,9 @@ Expected result: a fresh installation shows **Not signed in** and a **Sign in wi
 
 ### 4. Sign in with ChatGPT
 
-Click **Sign in with ChatGPT** and complete the browser approval yourself. If an embedded WebView blocks the sign-in window, use the displayed **Open ChatGPT sign-in page** link to continue in your system browser. Do not copy an authorization URL, code, token, or account identifier into an issue, log, or configuration file.
+Select **Authorize** in Models, or **Sign in with ChatGPT** in Plugin configuration, and complete the browser approval yourself. If an embedded WebView blocks the sign-in window, use the displayed **Open ChatGPT sign-in page** link to continue in your system browser. Do not copy an authorization URL, code, token, or account identifier into an issue, log, or configuration file.
 
-Expected result: the account area changes to **Signed in**. The screenshot below is the successful end state after this step; it is not the initial sign-in screen.
+Expected result: Models shows **Sign out** and **View quota**. The Plugin configuration account area shows **Signed in**. The screenshot below shows that fallback view after a successful sign-in; it is not the initial sign-in screen.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/franksong2702/dsh-codex-connect/main/docs/assets/en/oauth-status.jpg" alt="English-localized Codex Connect signed-in state inside Harness plugin configuration" width="720">
@@ -131,11 +144,11 @@ Expected result: `status --json` reports `signed-in` and exits `0`, while `docto
 The two small controls are shown only when the current conversation is using a GPT model from the `openai-codex` provider. They are session controls, not profile-wide settings:
 
 - **Fast Mode (lightning icon)** is off by default for each conversation. Click it to request the faster `1.5×` mode; click it again to return to Standard speed. The control is bound to that conversation and does not change the selected model or other conversations. Hover or focus the icon to see the current state and its quota-consumption warning.
-- **Weekly quota bar** is the short horizontal bar beside the model selector. Its color moves from green through yellow/orange to red as the remaining amount falls. Hover or focus it to see the exact remaining percentage and the server-provided reset time. It is hidden for non-GPT models or when usage data is unavailable.
-- For the exact `gpt-5.3-codex-spark` model, the Composer reads the Spark weekly bucket. Other GPT Codex models read the standard Codex weekly bucket; these are separate limits.
+- **Quota bars** are the compact `5h` and `7d` rows beside the model selector. Each row appears only when the server returns that window for the current model bucket. Their colors move from green through yellow/orange to red as the remaining amount falls. Hover or focus the control to see each exact remaining percentage and server-provided reset time. It is hidden for non-GPT models or when no recognized usage window is available.
+- For the exact `gpt-5.3-codex-spark` model, the Composer reads the separate Spark bucket. Other GPT Codex models read the standard Codex bucket. The plugin does not infer quota windows from the ChatGPT plan name.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/franksong2702/dsh-codex-connect/main/docs/assets/composer-capabilities.jpg" alt="DeepSeek Harness Composer with the per-conversation Fast Mode lightning control and weekly quota bar" width="820">
+  <img src="https://raw.githubusercontent.com/franksong2702/dsh-codex-connect/main/docs/assets/composer-capabilities.jpg" alt="DeepSeek Harness Composer with the per-conversation Fast Mode lightning control and quota bars" width="820">
 </p>
 
 ## Optional capabilities (off by default)
@@ -149,9 +162,10 @@ The installed bundle is intentionally inert beyond model-provider registration:
     enableSearch: false
     enableImageTool: false
     enableImageGeneration: false
+    enableAutoReview: false
 ```
 
-Open **Settings → Plugins → Plugin configuration → Codex Connect** to manage the account and these options in one card. **Save changes** affects only this plugin's capability section and applies live. It never selects a default model or a global search route.
+Open **Settings → Plugins → Plugin configuration → Codex Connect** to manage the same settings through four modules: **Account & quota**, **Models**, **Network**, and **Capabilities**. Switching modules preserves staged edits; the persistent Save/Discard actions apply them together. **Save changes** affects only this plugin and never selects a default model or a global search route. The Models page's **More settings** dialog uses the same organization without repeating the account module.
 
 ### Network connection and proxy detection
 
@@ -159,7 +173,7 @@ Codex Connect uses a **Direct connection** by default. A proxy is optional and a
 
 Select **Detect proxy** to test only the standard proxy environment variables and the documented loopback candidates `127.0.0.1:7890`, `127.0.0.1:7897`, and `127.0.0.1:10809`. Detection makes no model call, consumes no quota, and does not write settings. A response from the canonical Codex endpoint proves network reachability; `401/403`, proxy `407`, DNS, refused connection, timeout, TLS, and CONNECT failures remain separate diagnostics.
 
-Choose **Use this proxy** only after reviewing a candidate, then click **Save changes**. **Configure manually** lets you test a credential-free HTTP(S) proxy origin before activation. **Disable proxy** is always available. A failed probe leaves the previous mode unchanged, and an enabled proxy failure is shown as an actionable error; Codex Connect never silently retries the request through a direct connection.
+Choose **Use this proxy** only after reviewing a candidate, then click **Save changes**. **Configure manually** requires the exact current credential-free HTTP(S) proxy origin to pass its test before the activation action becomes available; editing the draft invalidates the earlier result. **Disable proxy** is always available. A failed probe leaves the previous mode unchanged, and an enabled proxy failure is shown as an actionable error; Codex Connect never silently retries the request through a direct connection.
 
 ### Enable only the capability you intend to use
 
@@ -194,10 +208,10 @@ The detailed image prompt is authored by the selected GPT model. Codex Connect d
 
 After sign-in, the Codex Connect settings card can show several server-reported windows. They are separate buckets, not three views of one number:
 
-- **Codex · Weekly** is the standard Codex weekly bucket used by ordinary GPT Codex models.
-- **GPT-5.3-Codex-Spark · 5-hour** and **GPT-5.3-Codex-Spark · Weekly** are the two Spark windows returned for the Spark model.
+- The standard **Codex** bucket can contain a **5-hour** window, a **Weekly** window, or both.
+- The exact Spark model uses the separate **GPT-5.3-Codex-Spark** bucket and displays whichever windows that bucket returns.
 
-Each bar shows the remaining percentage and its local reset time. OpenAI controls the returned windows, eligibility, and reset values; missing usage data is treated as unavailable rather than guessed.
+Each bar shows the remaining percentage and its local reset time. OpenAI controls the returned windows, eligibility, and reset values; Codex Connect does not remove a returned window based on the plan name or invent a missing one.
 
 ### Change a default model or global search route separately
 
@@ -242,7 +256,9 @@ Selecting Codex as the profile's global search route is another explicit change:
 
 Use `contextWindowOverrides` to opt into a per-model client context budget when you have evidence that the bundled catalog does not fit your deployment. It cannot enlarge the OpenAI backend's context capacity. Overrides default off; this feature does not verify the community-reported larger windows.
 
-In Plugin configuration, each model row keeps its visibility checkbox and adds **Context → Adjust**. Enter a positive whole-number token budget, or choose **Restore default** to use the catalog value even if composition supplies an override. Hiding a model preserves its budget. **Save** applies the staged visibility and budget edits; **Discard** abandons them. An empty input is not a reset: use **Restore default** explicitly.
+In Plugin configuration and **Models → More settings**, each model row shows its numeric context budget and keeps its visibility checkbox. **Context → Adjust** opens a synchronized slider and integer input, with the installed catalog default and a configuration ceiling. **Restore default** uses the catalog value even if composition supplies an override. Hiding a model preserves its budget. **Save** applies staged edits; **Discard** abandons them. An empty input is invalid, not a reset.
+
+Configuration ceilings follow the [official Codex catalog snapshot](https://github.com/openai/codex/blob/7625343977154efed8c0dadba956374992a1580b/codex-rs/models-manager/models.json), checked on 2026-08-28: GPT-5.6 Sol/Terra/Luna allow up to 872,000 tokens, GPT-5.4 up to 1,000,000, and GPT-5.5/GPT-5.4 mini up to 272,000. Models without a recorded ceiling, including Spark, are capped at their installed provider default. A provider default newer than and larger than the recorded ceiling also becomes the cap. The UI identifies the source; these values are not fetched from the user's account and are not measured server capacities. Defaults remain unchanged. Going above the default displays a quota and request-failure warning; account and route limits may differ.
 
 ```yaml
 - id: llm-openai-codex
@@ -252,7 +268,7 @@ In Plugin configuration, each model row keeps its visibility checkbox and adds *
       gpt-5.6-sol: 350000
 ```
 
-Keys must exactly match models in the installed Codex catalog; unknown ids reject the configuration or settings write with an explicit error. Maps accept at most 256 entries and positive safe-integer token counts. Other models keep their catalog metadata. Output-token limits, transport (SSE), and DSH's compaction policy are unchanged. Leave room for output and protocol overhead below your independently verified server limit. For a deployment configured to compact at 80%, a client window of `350000` gives a nominal threshold of `280000`; this arithmetic is not evidence that the server accepts that input size.
+Keys must exactly match models in the installed Codex catalog. Maps accept at most 256 entries and positive safe-integer token counts within each model's configuration ceiling. Unknown ids and out-of-range values reject configuration or settings registration/writes with an explicit error; existing out-of-range overrides must be reduced or reset with `null`, not silently clamped. Other models keep their catalog metadata. Output-token limits, transport (SSE), and DSH's compaction policy are unchanged. Leave room for output and protocol overhead below your independently verified server limit. For a deployment configured to compact at 80%, a client window of `350000` gives a nominal threshold of `280000`; this arithmetic is not evidence that the server accepts that input size.
 
 Persisted Host settings are applied on plugin load, and changes affect the next model resolution or prepared request. Already prepared requests retain their captured budget. The original catalog is never mutated.
 
@@ -298,9 +314,24 @@ The report labels each check `supported`, `rejected`, or `unknown`, with a reaso
 
 This report covers only the standalone route, not active profile routing, search/image tools, browser compatibility, provider retry behavior, or session recovery. Automatic provider failover is `rejected` because this plugin does not implement it; select an alternative provider explicitly. WebSocket-to-SSE fallback is inactive with the finite SSE default. `contextManagement` and continuation remain `unknown`; native compaction and WebSocket reuse are `rejected` by the current integration policy. No diagnostic result enables these capabilities or changes Harness history. Exit codes cover runtime, OAuth, selected model, Responses, and SSE only: `0` means all five were supported, `1` means at least one was rejected, and `2` means unknown evidence, invalid options, or an inspection failure. Rejected optional capabilities do not change that exit code.
 
+### Codex Auto-review and capability probe
+
+Codex Auto-review is an official Codex capability integrated by Codex Connect and disabled by default under **Settings → Plugins → Codex Connect**. Its short explanation stays visible; the full disclosure is expandable, and the first enablement in each profile requires confirmation. When enabled, it reviews eligible Harness approval requests after DSH policy runs. Enabling it permits the plugin to send bounded recent approval context, tool arguments, working directory, and the planned action to `chatgpt.com`; hidden reasoning and stored credentials are excluded. Only a complete structured allow result can grant one execution. Denials inject a rationale and no-circumvention instruction, repeated denials open a turn-local circuit breaker, and `/approve <denial-id>` can authorize one exact retry when the optional command service is present. See [Auto-review](docs/auto-review.md) and [自动审查](docs/auto-review.zh.md).
+
+The separate probe remains available for diagnosing the hidden route. It does not add `codex-auto-review` to the model selector and does not review or execute a real Harness command.
+
+```sh
+dsh plugin --profile web exec dsh-codex-connect auto-review-probe --json
+```
+
+The command sends one fixed, synthetic no-op to the hidden reviewer through the ChatGPT OAuth Responses route. It requires an unexpired stored credential, never refreshes or writes credentials, does not follow redirects or retry, caps the response at 64 KiB, and destroys its owned connection before returning. `--proxy <http(s)-origin>` and `--timeout-ms <1..60000>` have the same explicit-network meaning as the ordinary capability probe.
+
+`supported` means only that the route accepted the exact hidden model id and returned one complete assessment matching the reviewer JSON fields. `rejected` means the request or local prerequisite was explicitly rejected. Timeouts, cancellation, malformed output, incomplete streams, rate limits, and network failures remain `unknown`. Output omits credentials, account ids, response ids, provider messages, model text, paths, headers, and proxy origins. Exit `0` requires runtime, OAuth, and reviewer checks to be supported; exit `1` means at least one was rejected; exit `2` means evidence is unknown or input is invalid. The report is evidence only: it never changes the Auto-review setting, DSH policy, or authorization state.
+
 ## Compatibility and security boundary
 
-- The only verified compatibility combination is DSH plugin API packages `0.1.1-rc.2`, `@earendil-works/pi-ai` `0.82.1`, and Node.js `^22.19.0 || >=24.0.0`; see [compatibility.json](compatibility.json). Alpha 4.21 uses the rc.2 keyed Plugin configuration slot; users of older DSH API packages should upgrade to the rc.2 API packages.
+- Alpha 4.25 is verified with DSH plugin API packages `0.1.2-alpha.5`, `@earendil-works/pi-ai` `^0.84.2` (resolved as `0.84.4` during verification), and Node.js `^22.19.0 || >=24.0.0`. Alpha 4.24 remains an earlier verified choice for the same DSH version, Alpha 4.23 remains the verified choice for DSH `0.1.2-alpha.2`, and Alpha 4.21 remains verified with DSH `0.1.1-rc.2` and pi-ai `0.82.1`. [verified-compatibility.json](verified-compatibility.json) records the exact pairs; see [INSTALL.md](INSTALL.md) for installation commands.
+- The new DSH client splits its former runtime into Session Controller, Settings, Store, and Renderer packages. Codex Connect uses those public interfaces for settings and image actions. DSH owns normalized preview encoding and dimensions; Codex Connect retains the exact original image separately.
 - Upgrade the DSH plugin API packages and `@earendil-works/pi-ai` as one group, then run `dsh-codex-connect doctor --json` and the compatibility check again. This contract does not make claims about future versions.
 - When the daily upstream check finds a new `latest` or `next` DSH candidate, it installs Codex Connect into an isolated profile, boots the installed model runtime without OAuth credentials, verifies model and reasoning-effort discovery, and confirms provider disposal. Live sign-in, quota, and model requests still require manual validation in the test profile.
 - ChatGPT plan eligibility, model access, quotas, and backend behavior are controlled by OpenAI and may change.

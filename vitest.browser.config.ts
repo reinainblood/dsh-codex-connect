@@ -7,6 +7,11 @@ const packageVersion = (JSON.parse(
 ) as { version: string }).version
 
 export default defineConfig({
+  resolve: {
+    // The Desktop 2.0.4 compatibility suite links its host UI packages from
+    // the application bundle. Force one React instance across those symlinks.
+    dedupe: ['react', 'react-dom'],
+  },
   define: {
     __CODEX_CONNECT_VERSION__: JSON.stringify(packageVersion),
   },

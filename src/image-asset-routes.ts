@@ -15,9 +15,19 @@ import { decodeImagePresentationMeta } from './image-presentation.ts'
 /** Fork access follows copied result events, not every asset owned by an ancestor. */
 function inheritedOriginal(session: Session | undefined, assetId: string): OpenAICodexOriginalImageRef | undefined {
   if (session?.header.parentSession === undefined) return undefined
-  const seedLength = session.header.seedLength ?? 0
-  for (const event of session.events) {
-    if (event.seq >= seedLength) break
+  const snapshotEvents = Reflect.get(session, 'snapshotEvents')
+  const events = (
+    typeof snapshotEvents === 'function'
+      ? Reflect.apply(snapshotEvents, session, [])
+      : Reflect.get(session, 'events')
+  ) as ReturnType<Session['snapshotEvents']>
+  const inheritedEventCount = Reflect.get(session, 'inheritedEventCount')
+  const seedLength = Reflect.get(session.header, 'seedLength')
+  const boundary = typeof inheritedEventCount === 'number'
+    ? inheritedEventCount
+    : typeof seedLength === 'number' ? seedLength : 0
+  for (const event of events) {
+    if (event.seq >= boundary) break
     if (event.type !== 'tool/result') continue
     const meta = decodeImagePresentationMeta(event.data.meta)
     const original = meta?.images.find(image => image.original?.assetId === assetId)?.original
