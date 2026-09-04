@@ -1,49 +1,42 @@
 # DSH Desktop 2.0.4 compatibility
 
-This fork branch adapts the upstream Codex Connect `0.1.0-alpha.4.25` release
-to the exact runtime shipped in DSH Desktop 2.0.4:
+This fork branch adapts upstream Codex Connect `0.1.0-alpha.4.26` to the exact
+runtime shipped in DSH Desktop 2.0.4:
 
 - DSH plugin APIs: `0.1.2-alpha.1`
 - `@earendil-works/pi-ai`: `0.84.3`
 - `@deepseek-ai/cordis`: `4.0.1`
 - Node.js: `^22.19.0 || >=24.0.0`
 
-It is intentionally separate from upstream Alpha 4.25, which remains verified
-for DSH `0.1.2-alpha.5`. DSH Desktop 2.0.5 moved to DSH `0.1.2-rc.1` and is not
-covered by this branch.
+Upstream Alpha 4.26 targets DSH `0.1.2-rc.1`. This branch preserves its secure
+multi-account OAuth store and Undici update while retaining the alpha.1 API
+fallbacks required by Desktop 2.0.4.
 
 ## Compatibility changes
 
-- Retarget all declared DSH peers and diagnostics to the Desktop 2.0.4 bundle.
-- Use `deepEqualJson`, `settingsNamespace`, and `installSettingsSection` from
-  the alpha.1 `dsh-settings` API instead of the later `dsh-util-values` and
-  settings-service surface.
-- Retain Alpha 4.25's Models account card, modular Plugin settings, server-driven
-  quota windows, proxy workflow, compatibility diagnostics, and Auto-review UI.
-- Preserve the verified 1,000,000-token GPT-5.6 Sol client budget already used
-  by this Desktop profile; other model ceilings remain unchanged.
-- Serve a fork-owned verified compatibility catalog so the update card evaluates
-  the tested fork/runtime pair instead of applying upstream Alpha 4.25's
-  alpha.5-only record.
+- Retarget declared peers and runtime diagnostics to Desktop 2.0.4.
+- Use the alpha.1 settings namespace and section installer when the newer
+  settings service is absent.
+- Fall back to alpha.1 retained Session events and seed boundaries for
+  Auto-review and inherited image lookup.
+- Keep JSON equality inside the plugin instead of requiring the unavailable
+  `dsh-util-values` peer.
+- Preserve verified 1,000,000-token client budgets for GPT-5.6 Sol and GPT-5.5.
+- Extend the older pi-ai catalog with GPT-6 Astra using the official
+  1,050,000-token context, 128,000-token output, and low-through-max reasoning
+  contract. Catalog presence does not claim OAuth entitlement; a live request
+  remains the required proof.
+- Serve a fork-owned compatibility catalog for the tested alpha.1 pairing.
 
-## Acceptance evidence
+## Acceptance gates
 
-The fork was tested against DSH Desktop 2.0.4's packaged CLI and Host modules,
-not inferred from package names alone:
+The branch must pass lint, typecheck, unit tests, browser tests, production
+build, package inspection, and `check:desktop-204-install`. The Desktop gate
+packs the plugin, installs it in an isolated profile, links the exact modules
+from `/Applications/DSH Desktop.app`, registers one Codex adapter, and requires
+`doctor --json` to report DSH alpha.1 and pi-ai 0.84.3 as compatible.
 
-1. An isolated profile loaded exactly one `llm-openai-codex` provider.
-2. `doctor --json` reported plugin `0.1.0-alpha.4.25`, DSH API
-   `0.1.2-alpha.1`, and pi-ai `0.84.3` as compatible with no provider conflict.
-3. A disposable Web boot rendered Codex Connect under both Settings -> Plugins
-   and Settings -> Models without browser errors.
-4. The Plugin card showed version 4.25, account, models, network, and capability
-   modules; the capability module rendered Auto-review, search, and GPT Image
-   controls.
-5. The real Desktop profile must still preserve its existing OAuth state,
-   default model, global search route, model visibility, and context-window
-   override during installation and be checked again after restart.
-
-The removed alpha.1 npm artifacts make a fresh registry-only dependency install
-impossible. Runtime acceptance therefore uses the exact modules embedded by DSH
-Desktop 2.0.4. The GitHub package includes committed build output, as required
-for profile installation without a local build step.
+Real-profile acceptance additionally requires a full Desktop restart followed
+by verification of signed-in state, preserved account selection, model
+visibility, context overrides, provider uniqueness, and one finite Astra OAuth
+response or an exact account-entitlement rejection.

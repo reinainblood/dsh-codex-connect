@@ -7,12 +7,12 @@ export const OPENAI_CODEX_MODEL_CATALOG_PATH = '/plugins/dsh-codex-connect/model
 export const OPENAI_CODEX_CONTEXT_LIMIT_SOURCE = 'https://github.com/openai/codex/blob/7625343977154efed8c0dadba956374992a1580b/codex-rs/models-manager/models.json'
 
 const CONFIGURATION_LIMITS: Readonly<Record<string, number>> = Object.freeze({
-  // DSH Desktop 2.0.4's deployed Codex route has a verified 1M client budget.
+  'gpt-6-astra': 1_000_000,
   'gpt-5.6-sol': 1_000_000,
   'gpt-5.6-terra': 872_000,
   'gpt-5.6-luna': 872_000,
   'gpt-5.4': 1_000_000,
-  'gpt-5.5': 272_000,
+  'gpt-5.5': 1_000_000,
   'gpt-5.4-mini': 272_000,
 })
 

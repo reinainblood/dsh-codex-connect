@@ -63,6 +63,25 @@ describe('OpenAI Codex rc.2 adapter profile', () => {
     )
     await expect(adapter.listModels(OPENAI_CODEX_PROVIDER)).resolves.toHaveLength(openAICodexModelCatalog().length)
   })
+
+  it('supplies Astra to the older Desktop catalog without claiming entitlement', async () => {
+    const adapter = createOpenAICodexAdapter(
+      {} as OpenAICodexCredentialStore,
+      () => undefined,
+    )
+    const astra = await adapter.resolveModel(OPENAI_CODEX_PROVIDER, 'gpt-6-astra')
+    expect(astra).toMatchObject({
+      id: 'gpt-6-astra',
+      name: 'GPT-6 Astra',
+      provider: OPENAI_CODEX_PROVIDER,
+      reasoning: {
+        efforts: [
+          { id: 'minimal' }, { id: 'low' }, { id: 'medium' },
+          { id: 'high' }, { id: 'xhigh' }, { id: 'max' },
+        ],
+      },
+    })
+  })
 })
 
 describe('context-window overrides', () => {

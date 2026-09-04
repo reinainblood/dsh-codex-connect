@@ -13,6 +13,7 @@ const DESKTOP_CLI = join(RUNTIME_ROOT, 'lib/desktop-cli.js')
 const EXPECTED_DESKTOP_VERSION = '2.0.4'
 const EXPECTED_DSH_VERSION = '0.1.2-alpha.1'
 const EXPECTED_PI_AI_VERSION = '0.84.3'
+const EXPECTED_PLUGIN_VERSION = '0.1.0-alpha.4.26'
 
 function run(args, environment, options = {}) {
   const result = spawnSync(process.execPath, [DESKTOP_CLI, ...args], {
@@ -100,7 +101,7 @@ try {
   const doctor = JSON.parse(run([
     'plugin', '--profile', 'web', 'exec', 'dsh-codex-connect', 'doctor', '--json',
   ], environment))
-  if (doctor.version !== '0.1.0-alpha.4.25') throw new Error('doctor reported the wrong plugin version')
+  if (doctor.version !== EXPECTED_PLUGIN_VERSION) throw new Error('doctor reported the wrong plugin version')
   if (doctor.providerConflict !== false) throw new Error('doctor found a provider conflict')
   if (doctor.compatibility?.status !== 'compatible') throw new Error('doctor rejected Desktop compatibility')
   if (doctor.compatibility?.packages?.['@deepseek-ai/dsh-llm']?.installed !== EXPECTED_DSH_VERSION) {

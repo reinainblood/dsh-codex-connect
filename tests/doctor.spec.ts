@@ -27,8 +27,8 @@ describe('Codex Connect doctor', () => {
       changesHarnessDefaultModel: false,
       changesHarnessSearchRoute: false,
     })
-    // Development dependencies track upstream Alpha 4.25; the separately
-    // exercised Desktop profile supplies the fork's alpha.1 runtime contract.
+    // Development dependencies track upstream rc.1; the Desktop acceptance
+    // gate supplies and verifies the fork's alpha.1 runtime contract.
     expect(report.compatibility.status).toBe('incompatible')
   })
 

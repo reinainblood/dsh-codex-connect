@@ -17,7 +17,7 @@ function fixture() {
     capabilities: { modelProvider: true, search: false, imageTool: false, imageGeneration: false, changesHarnessDefaultModel: false, changesHarnessSearchRoute: false },
     providerConflict: false, hints: [],
     compatibility: evaluateCompatibility({ nodeVersion: 'v22.19.0', packageVersions: {
-      '@deepseek-ai/dsh-llm': '0.1.2-alpha.1', '@deepseek-ai/dsh-llm-pi-ai': '0.1.2-alpha.1', '@earendil-works/pi-ai': '0.84.2',
+      '@deepseek-ai/dsh-llm': '0.1.2-alpha.1', '@deepseek-ai/dsh-llm-pi-ai': '0.1.2-alpha.1', '@earendil-works/pi-ai': '0.84.3',
     } }),
   }
   const credential = { type: 'oauth' as const, access: secrets[0]!, accountId: secrets[1]!, refresh: secrets[2]!, expires: 1_000_000 }

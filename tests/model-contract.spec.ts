@@ -5,11 +5,12 @@ import { decodeOpenAICodexModelCatalog, isValidOpenAICodexContextBudget, openAIC
 
 describe('model-specific configuration ceilings', () => {
   it.each([
+    ['gpt-6-astra', 1_050_000, 1_050_000],
     ['gpt-5.6-sol', 272_000, 1_000_000],
     ['gpt-5.6-terra', 272_000, 872_000],
     ['gpt-5.6-luna', 272_000, 872_000],
     ['gpt-5.4', 272_000, 1_000_000],
-    ['gpt-5.5', 272_000, 272_000],
+    ['gpt-5.5', 272_000, 1_000_000],
     ['gpt-5.4-mini', 272_000, 272_000],
     ['gpt-5.3-codex-spark', 128_000, 128_000],
   ])('exposes %s defaults and enforces the ceiling in both browser and adapter validation', (id, contextWindow, maximum) => {

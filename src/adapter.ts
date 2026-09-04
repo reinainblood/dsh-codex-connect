@@ -15,9 +15,52 @@ import type { OpenAICodexModelCatalogEntry } from './model-contract.ts'
 import { isValidOpenAICodexContextBudget, openAICodexContextLimit } from './model-contract.ts'
 import type { OpenAICodexProxyManager } from './provider-proxy.ts'
 
+const ASTRA_MODEL_ID = 'gpt-6-astra'
+
+/**
+ * Extend older Desktop pi-ai catalogs with the current Codex Astra contract.
+ * Entitlement is still proved only by a live OAuth request; catalog presence is
+ * not treated as account access.
+ */
+function openAICodexProviderWithAstra(): Provider {
+  const provider = openaiCodexProvider()
+  const baseline = provider.getModels()
+  if (baseline.some(model => model.id === ASTRA_MODEL_ID)) return provider
+  const sol = baseline.find(model => model.id === 'gpt-5.6-sol')
+  if (sol === undefined) return provider
+  const astra = {
+    ...sol,
+    id: ASTRA_MODEL_ID,
+    name: 'GPT-6 Astra',
+    contextWindow: 1_050_000,
+    maxTokens: 128_000,
+    cost: {
+      input: 10,
+      output: 50,
+      cacheRead: 1,
+      cacheWrite: 12.5,
+      tiers: [{
+        inputTokensAbove: 272_000,
+        input: 20,
+        output: 75,
+        cacheRead: 2,
+        cacheWrite: 25,
+      }],
+    },
+    thinkingLevelMap: {
+      ...sol.thinkingLevelMap,
+      off: null,
+      minimal: 'low',
+      xhigh: 'xhigh',
+      max: 'max',
+    },
+  }
+  return { ...provider, getModels: () => [...baseline, astra] }
+}
+
 /** Return a detached copy of the complete pi-ai Codex model catalog. */
 export function openAICodexModelCatalog(): readonly OpenAICodexModelCatalogEntry[] {
-  return openaiCodexProvider().getModels().map(model => ({
+  return openAICodexProviderWithAstra().getModels().map(model => ({
     id: model.id, name: model.name, contextWindow: model.contextWindow,
     ...openAICodexContextLimit(model.id, model.contextWindow),
   }))
@@ -186,7 +229,7 @@ export function createOpenAICodexAdapter(
   resolveProxyUrl?: () => string | undefined,
   contextWindowOverrides?: () => Readonly<Record<string, number>> | undefined,
 ): PiAiAdapter {
-  const provider = openaiCodexProvider()
+  const provider = openAICodexProviderWithAstra()
   let profiles: Map<string, ResolvedPiAiProviderProfile> | undefined
   let previousOverrides: Readonly<Record<string, number>> | undefined
   const currentProfiles = (): Map<string, ResolvedPiAiProviderProfile> => {

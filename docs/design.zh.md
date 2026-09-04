@@ -10,7 +10,9 @@ Host 将 `llm-openai-codex` 注册为插件自有的能力 settings namespace。
 
 ## OAuth 持久化
 
-插件使用 `$DSH_HOME/.openai-codex-auth.json`，与 Codex CLI/Desktop 状态分离。文件格式严格且有版本号；POSIX 上会拒绝组/其他用户可读文件。父目录和文件按仅所有者权限创建，写入采用原子替换，刷新修改使用 Harness 跨进程文件锁，返回给调用方的是凭据副本。浏览器 origin 授权单独存放于 `$DSH_HOME/.openai-codex-trusted-origins.json`，格式为 `version: 1`、`mode: "allowlist"` 和规范化的精确 HTTP(S) origin；其中不含 OAuth 内容，且只能通过独立 CLI 修改。
+插件使用 `$DSH_HOME/.openai-codex-auth.json`，与 Codex CLI/Desktop 状态分离。格式 version 2 最多保存 16 个 OAuth 账户，并明确指定唯一当前账户。原 version 1 文件仍可读取，第一次修改凭据时才迁移；迁移前会先生成仅所有者可读的 `.openai-codex-auth.json.v1-backup` 回退副本。若该副本已存在，它必须仅所有者可读且与当前 version 1 文件一致，否则迁移会在替换主文件前停止。移除任一账户或执行退出登录时会删除该副本，避免已移除凭据继续留存。文档大小上限为 512 KiB。POSIX 上拒绝组/其他用户可读文件，也拒绝非普通文件；写入采用原子替换，所有修改使用 Harness 跨进程文件锁，返回给调用方的是凭据副本。
+
+浏览器账户路由只返回插件派生的稳定键、本地显示名称、OAuth token 中存在邮箱时的脱敏地址以及当前账户状态，不返回 provider 原始 account id 或 token 字段。账户切换和删除与浏览器 OAuth 串行执行；OAuth 解析完成后，额度、图片生成和 Auto-review 请求会查找与该 access token 精确配套的 account id，因此并发切换账户不会混用两个账户的凭据。仍有其他账户时，删除当前账户必须由调用方明确指定接替账户；provider 级退出登录会删除全部账户。浏览器 origin 授权单独存放于 `$DSH_HOME/.openai-codex-trusted-origins.json`，格式为 `version: 1`、`mode: "allowlist"` 和规范化的精确 HTTP(S) origin；其中不含 OAuth 内容，且只能通过独立 CLI 修改。
 
 为兼容迁移，设置页路由、OAuth 路径和 provider id 不改名。浏览器请求默认只允许 loopback；远程请求必须使用当前 sidecar 中的精确有效 HTTP(S) origin，不能带 cross-site Fetch Metadata，若带 Origin 还必须精确匹配。每次请求都会重新读取 sidecar；未知字段或错误 mode 会快速失败。登录挑战只接受不含凭据的 HTTPS 地址；30 秒内未得到地址、provider 已结束但没有地址、退出登录或插件卸载时，所有 waiter 都会被清理。只有显式登录会输出授权 URL 或代码；状态输出会脱敏。doctor 只用 `lstat` 检查元数据，不打开文件。
 
@@ -22,4 +24,4 @@ Host 将 `llm-openai-codex` 注册为插件自有的能力 settings namespace。
 
 注册前检查现有 provider id；发现 `openai-codex` 已被占用时，给出旧 bundle 或手动 provider 配置的定向迁移提示。boot-free CLI doctor 只报告包/运行时版本、OAuth 路径元数据、能力默认值和安全提示。
 
-Alpha 4.25 固定使用 Harness `0.1.2-alpha.5` 开发依赖，并跟随其 pi-ai 版本范围 `^0.84.2`；已验证的发布锁文件选择 pi-ai `0.84.4`。Node.js 支持范围仍为 `^22.19.0 || >=24.0.0`。keyed `settings.plugin.item` 集成保持不变，客户端类型继续从 Session Controller、Settings、Store 和 Renderer 的所属包导入。已发布兼容性记录列出 Alpha 4.25 与 DSH `0.1.2-alpha.5` 的精确组合。资格、额度、模型、服务端上下文容量和后端协议仍由上游控制。测试仅使用临时 OAuth 文档和模拟网络响应，CI 不执行真实认证。
+Alpha 4.26 固定使用 Harness `0.1.2-rc.1` 开发依赖，并跟随其 pi-ai 版本范围 `^0.84.2`。Node.js 支持范围仍为 `^22.19.0 || >=24.0.0`。keyed `settings.plugin.item` 集成保持不变，客户端类型继续从 Session Controller、Settings、Store 和 Renderer 的所属包导入。已发布兼容性记录列出 Alpha 4.26 与 DSH `0.1.2-rc.1` 的精确组合。资格、额度、模型、服务端上下文容量和后端协议仍由上游控制。测试仅使用临时 OAuth 文档和模拟网络响应，CI 不执行真实认证。
