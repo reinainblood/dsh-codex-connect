@@ -29,10 +29,10 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function completedResponse(value: unknown, model: string): boolean {
+function completedResponse(value: unknown, model: string, streamedText: boolean): boolean {
   if (!record(value) || value['status'] !== 'completed' || !Array.isArray(value['output'])) return false
   if (value['model'] !== model) return false
-  return value['output'].some(item => record(item) && item['type'] === 'message'
+  return streamedText || value['output'].some(item => record(item) && item['type'] === 'message'
     && item['role'] === 'assistant' && Array.isArray(item['content'])
     && item['content'].some(part => record(part) && part['type'] === 'output_text'
       && typeof part['text'] === 'string' && part['text'].trim().length > 0))
@@ -41,6 +41,7 @@ function completedResponse(value: unknown, model: string): boolean {
 /** Inspect complete SSE frames, not substrings inside error text or schema errors. */
 function completedStream(text: string, model: string): boolean {
   let completed = false
+  let streamedText = false
   let data: string[] = []
   for (const line of text.split(/\r\n|\r|\n/u)) {
     if (line === '') {
@@ -56,8 +57,10 @@ function completedStream(text: string, model: string): boolean {
       }
       if (!record(event)) return false
       if (event['type'] === 'error' || event['type'] === 'response.failed' || event['type'] === 'response.incomplete') return false
+      if (event['type'] === 'response.output_text.delta'
+        && typeof event['delta'] === 'string' && event['delta'].trim().length > 0) streamedText = true
       if (event['type'] === 'response.completed' || event['type'] === 'response.done') {
-        if (completed || !completedResponse(event['response'], model)) return false
+        if (completed || !completedResponse(event['response'], model, streamedText)) return false
         completed = true
       }
     } else if (line.startsWith('data:')) {
@@ -109,7 +112,9 @@ export async function probeCodexResponses(
       await response.body?.cancel()
       return { outcome: [400, 401, 403, 404, 405, 422].includes(httpStatus) ? 'http-rejected' : 'transient', httpStatus }
     }
-    if (httpStatus !== 200 || !response.headers.get('content-type')?.toLowerCase().startsWith('text/event-stream') || response.body === null) {
+    const contentType = response.headers.get('content-type')
+    if (httpStatus !== 200 || response.body === null
+      || (contentType !== null && !contentType.toLowerCase().startsWith('text/event-stream'))) {
       await response.body?.cancel()
       return { outcome: 'incomplete', httpStatus }
     }

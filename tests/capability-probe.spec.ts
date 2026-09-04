@@ -20,7 +20,7 @@ class OfflineProbeAgent extends MockAgent {
   override destroy(): Promise<void> { return this.close() }
 }
 
-function fixture(status: number, body: string, headers = { 'content-type': 'text/event-stream' }) {
+function fixture(status: number, body: string, headers: Record<string, string> = { 'content-type': 'text/event-stream' }) {
   const agent = new OfflineProbeAgent()
   agent.disableNetConnect()
   agent.get('https://chatgpt.com').intercept({
@@ -47,6 +47,13 @@ describe('standalone finite Responses probe', () => {
   it('accepts CRLF frames and the provider response.done alias', async () => {
     const agent = fixture(200, sse({ ...terminal, type: 'response.done' }).replaceAll('\n', '\r\n'))
     expect((await probeCodexResponses(request, () => agent)).outcome).toBe('completed')
+  })
+
+  it('accepts Astra streaming text when its completed response is sparse and content-type is omitted', async () => {
+    const sparseTerminal = { ...terminal, response: { ...terminal.response, output: [] } }
+    const delta = { type: 'response.output_text.delta', delta: 'ok' }
+    expect(await probeCodexResponses(request, () => fixture(200, sse(delta) + sse(sparseTerminal), {})))
+      .toEqual({ outcome: 'completed', httpStatus: 200 })
   })
 
   it.each([
