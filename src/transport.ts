@@ -3,9 +3,7 @@
 import { randomUUID } from 'node:crypto'
 import { Service } from '@deepseek-ai/cordis'
 import type { Context } from '@deepseek-ai/cordis'
-import { createModels } from '@earendil-works/pi-ai'
-import type { MutableModels } from '@earendil-works/pi-ai'
-import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex'
+import { readOpenAICodexRequestAuth } from './auth.ts'
 import {
   OPENAI_CODEX_REAUTH_REQUIRED_CODE,
 } from './usage.ts'
@@ -234,7 +232,6 @@ function parseSuccess(bytes: Uint8Array): readonly GeneratedImagePayload[] {
 /** Core-owned Cordis service for the optional image package. */
 export class OpenAICodexTransport extends Service implements OpenAICodexTransportV1 {
   readonly apiVersion = OPENAI_CODEX_TRANSPORT_API_VERSION
-  private readonly models: MutableModels
 
   constructor(
     ctx: Context,
@@ -243,8 +240,6 @@ export class OpenAICodexTransport extends Service implements OpenAICodexTranspor
     private readonly resolveProxyUrl: () => string | undefined = () => undefined,
   ) {
     super(ctx, OPENAI_CODEX_TRANSPORT_SERVICE)
-    this.models = createModels({ credentials })
-    this.models.setProvider(openaiCodexProvider())
   }
 
   async generateImages(
@@ -267,20 +262,21 @@ export class OpenAICodexTransport extends Service implements OpenAICodexTranspor
       throw new OpenAICodexTransportError(OPENAI_CODEX_TRANSPORT_ERROR_CODES.canceled)
     }
 
-    const stored = await this.credentials.read(OPENAI_CODEX_PROVIDER)
+    const credentials = await this.credentials.captureActiveAccount()
+    const stored = await credentials.read(OPENAI_CODEX_PROVIDER)
     if (stored?.type !== 'oauth') {
       throw new OpenAICodexTransportError(OPENAI_CODEX_TRANSPORT_ERROR_CODES.signedOut)
     }
 
-    let auth: Awaited<ReturnType<MutableModels['getAuth']>>
+    let auth: Awaited<ReturnType<typeof readOpenAICodexRequestAuth>>
     try {
-      auth = await this.models.getAuth(OPENAI_CODEX_PROVIDER)
+      auth = await readOpenAICodexRequestAuth(credentials, context.signal)
     } catch {
+      if (isAborted(context.signal)) throw new OpenAICodexTransportError(OPENAI_CODEX_TRANSPORT_ERROR_CODES.canceled)
       throw new OpenAICodexTransportError(OPENAI_CODEX_TRANSPORT_ERROR_CODES.reauthRequired)
     }
-    const refreshed = await this.credentials.read(OPENAI_CODEX_PROVIDER)
-    const access = auth?.auth.apiKey
-    const accountId = refreshed?.type === 'oauth' ? refreshed.accountId : undefined
+    const access = auth?.access
+    const accountId = auth?.accountId
     if (typeof access !== 'string' || access.length === 0
       || typeof accountId !== 'string' || accountId.length === 0) {
       throw new OpenAICodexTransportError(OPENAI_CODEX_TRANSPORT_ERROR_CODES.reauthRequired)

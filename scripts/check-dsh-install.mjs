@@ -9,7 +9,7 @@ import { scrubCanaryEnvironment } from './canary-environment.mjs'
 import { runBoundedCommand } from './bounded-command.mjs'
 
 const JSON_SCHEMA_VERSION = 1
-const DEFAULT_DSH_VERSION = '0.1.1-rc.2'
+const DEFAULT_DSH_VERSION = '0.1.2-rc.1'
 const UNDECLARED_CANARY_MODE = '1'
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const RUNTIME_CHECK = resolve(REPO_ROOT, 'scripts/check-installed-runtime.mjs')
@@ -119,8 +119,8 @@ function assertDoctorJson(value, dshHome, repoRoot) {
   }
   for (const name of expectedPackages) {
     const entry = compatibility?.['packages']?.[name]
-    const supported = name === '@earendil-works/pi-ai' ? '0.82.1' : DEFAULT_DSH_VERSION
-    if (entry?.['supported'] !== supported || entry?.['installed'] !== supported || entry?.['status'] !== 'compatible') {
+    const supported = name === '@earendil-works/pi-ai' ? '^0.84.2' : DEFAULT_DSH_VERSION
+    if (entry?.['supported'] !== supported || typeof entry?.['installed'] !== 'string' || entry?.['status'] !== 'compatible') {
       throw new CompatibilityCheckError(`doctor JSON did not report compatible ${name}`)
     }
   }
@@ -224,9 +224,14 @@ async function main() {
     if (!/^    enableProxy: false$/mu.test(pluginBlock)
       || !/^    enableSearch: false$/mu.test(pluginBlock)
       || !/^    enableImageTool: false$/mu.test(pluginBlock)
-      || !/^    enableImageGeneration: false$/mu.test(pluginBlock)) {
+      || !/^    enableImageGeneration: false$/mu.test(pluginBlock)
+      || !/^    enableAutoReview: false$/mu.test(pluginBlock)) {
       throw new CompatibilityCheckError('local plugin configuration did not retain all optional capabilities as false')
     }
+
+    // DSH rc.1 prepares profile-to-installation module fallback during profile composition.
+    const profileHelp = await runCommand(dshBinary, ['web', '--help'], { cwd: workspace, env })
+    requireSuccess('installed profile boot', profileHelp, 'compatibility')
 
     const doctor = await runCommand(dshBinary, [
       'plugin', '--profile', 'web', 'exec', 'dsh-codex-connect', 'doctor', '--json',
@@ -238,6 +243,7 @@ async function main() {
     const runtime = await runCommand(process.execPath, [
       RUNTIME_CHECK,
       join(dshHome, 'profiles', 'web', 'package.json'),
+      join(installRoot, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'),
     ], { cwd: workspace, env })
     requireSuccess('installed runtime contract', runtime, 'compatibility')
     const runtimeReport = parseOneLineJson(runtime.stdout, 'installed runtime contract')
@@ -261,6 +267,7 @@ async function main() {
         enableSearch: false,
         enableImageTool: false,
         enableImageGeneration: false,
+        enableAutoReview: false,
       },
       runtime: runtimeReport,
     })}\n`)

@@ -25,10 +25,7 @@ token and does not promote the `latest` dist-tag.
    `main` branch. Enter the exact package version and type `PUBLISH` in the
    confirmation field.
 
-The workflow installs with the frozen lockfile, runs `pnpm run check` before
-publishing, publishes with `npm publish --tag alpha --provenance` through npm
-Trusted Publishing, retries the npm version and `alpha` dist-tag readback, and
-creates the matching GitHub prerelease. It intentionally does not run
+The workflow requires completed successful main CI for the exact release SHA, including both Node versions, browser UI regression and the Windows contract. Missing, incomplete, skipped or failed jobs block publishing. A read-only job installs the frozen dependencies, runs `pnpm run check`, and uploads a SHA-256-identified tarball. The `npm-release` job rechecks CI after environment approval, verifies the tarball digest, and publishes that artifact with lifecycle scripts disabled. Only this job has contents-write and OIDC permissions; it does not install project dependencies or run tests. It retries the npm version and `alpha` dist-tag readback and creates the matching GitHub prerelease. It intentionally does not run
 `npm dist-tag add` because npm Trusted Publishing does not support that command.
 
 ## Promoting `latest` (short-lived interactive authentication)

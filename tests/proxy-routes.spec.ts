@@ -61,9 +61,7 @@ afterEach(() => { vi.unstubAllEnvs() })
 
 describe('OpenAI Codex proxy routes', () => {
   it('detects bounded candidates without a settings mutation', async () => {
-    vi.stubEnv('HTTPS_PROXY', '')
-    vi.stubEnv('HTTP_PROXY', '')
-    vi.stubEnv('ALL_PROXY', '')
+    for (const name of ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy']) vi.stubEnv(name, '')
     const probe = vi.fn(async (proxyUrl: string) => ({
       proxyUrl,
       reachable: proxyUrl.endsWith(':7890'),

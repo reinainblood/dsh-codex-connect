@@ -33,6 +33,39 @@ afterEach(async () => {
 })
 
 describe('OpenAI Codex proxy manager', () => {
+  it('does not form a dispatch cycle when a third-party wrapper retains the prior dispatcher', async () => {
+    const original = new RecordingDispatcher()
+    setGlobalDispatcher(original)
+    const manager = new OpenAICodexProxyManager()
+    manager.run('http://127.0.0.1:9', () => undefined)
+    const retained = getGlobalDispatcher()
+    class ThirdParty extends Dispatcher {
+      dispatch(options: Dispatcher.DispatchOptions, handler: Dispatcher.DispatchHandler): boolean {
+        return retained.dispatch(options, handler)
+      }
+    }
+    const replacement = new ThirdParty()
+    setGlobalDispatcher(replacement)
+    try {
+      manager.run('http://127.0.0.1:9', () => undefined)
+      getGlobalDispatcher().dispatch({ origin: 'http://fixture.invalid', path: '/', method: 'GET' }, {} as Dispatcher.DispatchHandler)
+      expect(original.calls).toBe(1)
+    } finally {
+      await manager.dispose()
+    }
+    expect(getGlobalDispatcher()).toBe(replacement)
+  })
+  it('restores the latest third-party dispatcher after a second owner takes over', async () => {
+    const first = new OpenAICodexProxyManager()
+    const second = new OpenAICodexProxyManager()
+    first.run('http://127.0.0.1:9', () => undefined)
+    const replacement = new RecordingDispatcher()
+    setGlobalDispatcher(replacement)
+    second.run('http://127.0.0.1:9', () => undefined)
+    await first.dispose()
+    await second.dispose()
+    expect(getGlobalDispatcher()).toBe(replacement)
+  })
   it('scopes fetch through the proxy and leaves unrelated dispatch on the original dispatcher', async () => {
     const target = createServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'text/plain' })
@@ -111,6 +144,36 @@ describe('OpenAI Codex proxy manager', () => {
     await operation
     await disposing
     expect(completed).toBe(true)
+    expect(getGlobalDispatcher()).toBe(fallback)
+  })
+
+  it('deactivates and reconfigures one controller without intercepting unrelated traffic', async () => {
+    const fallback = new RecordingDispatcher()
+    setGlobalDispatcher(fallback)
+    const dispatch = vi.spyOn(ProxyAgent.prototype, 'dispatch').mockReturnValue(true)
+    const close = vi.spyOn(ProxyAgent.prototype, 'destroy').mockResolvedValue()
+    const manager = new OpenAICodexProxyManager()
+
+    manager.run(DEFAULT_OPENAI_CODEX_PROXY_URL, () => {
+      getGlobalDispatcher().dispatch({ origin: 'https://chatgpt.com', path: '/', method: 'GET' }, {} as Dispatcher.DispatchHandler)
+    })
+    getGlobalDispatcher().dispatch({ origin: 'https://unrelated.example', path: '/', method: 'GET' }, {} as Dispatcher.DispatchHandler)
+    expect(dispatch).toHaveBeenCalledOnce()
+    expect(fallback.calls).toBe(1)
+
+    await manager.deactivate()
+    expect(close).toHaveBeenCalledOnce()
+    expect(getGlobalDispatcher()).toBe(fallback)
+
+    manager.run('http://127.0.0.1:7897', () => {
+      getGlobalDispatcher().dispatch({ origin: 'https://chatgpt.com', path: '/', method: 'GET' }, {} as Dispatcher.DispatchHandler)
+    })
+    getGlobalDispatcher().dispatch({ origin: 'https://unrelated.example', path: '/', method: 'GET' }, {} as Dispatcher.DispatchHandler)
+    expect(dispatch).toHaveBeenCalledTimes(2)
+    expect(fallback.calls).toBe(2)
+
+    await manager.dispose()
+    expect(close).toHaveBeenCalledTimes(2)
     expect(getGlobalDispatcher()).toBe(fallback)
   })
 })

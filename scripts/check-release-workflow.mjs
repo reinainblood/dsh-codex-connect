@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import './verify-release-ci.test.mjs'
 
 const workflowPath = fileURLToPath(new URL('../.github/workflows/release.yml', import.meta.url))
 const ciWorkflowPath = fileURLToPath(new URL('../.github/workflows/ci.yml', import.meta.url))
@@ -28,12 +29,12 @@ assertContract('release concurrency is configured', /^concurrency:\s*\n/m.test(w
 const permissionBlock = workflow.match(/^permissions:\s*\n((?:^[ \t]+[^\n]*\n?)+)/m)?.[1] ?? ''
 const permissionNames = [...permissionBlock.matchAll(/^\s+([a-z-]+):/gm)].map((match) => match[1])
 assertContract(
-  'permissions are limited to contents write and id-token write',
+  'verification has read-only permissions and no OIDC',
   permissionNames.length === 2 &&
     permissionNames.includes('contents') &&
-    permissionNames.includes('id-token') &&
-    /\bcontents:\s*write\b/.test(permissionBlock) &&
-    /\bid-token:\s*write\b/.test(permissionBlock),
+    permissionNames.includes('actions') &&
+    /\bcontents:\s*read\b/.test(permissionBlock) &&
+    /\bactions:\s*read\b/.test(permissionBlock),
 )
 assertContract('long-lived npm token names are absent', !/\b(?:NPM_TOKEN|NODE_AUTH_TOKEN)\b/i.test(workflow))
 assertContract('all actions are pinned to full commit SHAs', (() => {
@@ -64,10 +65,15 @@ assertContract(
     /GH_TOKEN:\s*\$\{\{\s*github\.token\s*\}\}/.test(releaseValidationEnv),
 )
 
-const publishIndex = workflow.indexOf('npm publish --tag alpha --provenance')
+const publishIndex = workflow.indexOf('npm publish "$RUNNER_TEMP/release/release.tgz" --tag alpha --provenance --ignore-scripts')
 const checkIndex = workflow.indexOf('pnpm run check')
 assertContract('complete check precedes npm publish', checkIndex >= 0 && publishIndex > checkIndex)
 assertContract('publish uses npm OIDC provenance and alpha tag', publishIndex >= 0)
+const publishJob = workflow.split('\n  publish:\n')[1] ?? ''
+assertContract('publish waits for read-only verification', /needs: verify/.test(publishJob))
+assertContract('privileged job does not install project dependencies or run project tests', !/pnpm|npm (?:ci|install)(?! --global)/.test(publishJob))
+assertContract('CI is checked before verification and after approval', (workflow.match(/run: node scripts\/verify-release-ci.mjs/g) ?? []).length === 2)
+assertContract('verified artifact is SHA-bound and digest checked', workflow.includes('verified-package-${{ github.sha }}') && publishJob.includes('needs.verify.outputs.sha256') && publishJob.includes('sha256sum --check --strict'))
 assertContract('post-publish version and alpha tag verification is retried',
   /for attempt in 1 2 3 4 5 6/.test(workflow) &&
   /npm view "\$PACKAGE\@\$VERSION" version/.test(workflow) &&
@@ -75,6 +81,7 @@ assertContract('post-publish version and alpha tag verification is retried',
 assertContract('GitHub prerelease is created from the workflow SHA',
   /gh release create[\s\S]*?--prerelease[\s\S]*?--target "\$GITHUB_SHA"[\s\S]*?--generate-notes/.test(workflow))
 assertContract('workflow never promotes the latest dist-tag', !/npm dist-tag add/.test(workflow))
+assertContract('CI also covers dependent PR bases', /pull_request:\s*\n\s{2}workflow_dispatch:/.test(ciWorkflow))
 assertContract('package check invokes this contract', packageJson.scripts?.['check:release-workflow'] === 'node scripts/check-release-workflow.mjs')
 assertContract('full check includes the release contract', /(?:^|&&)\s*pnpm run check:release-workflow(?:\s|$)/.test(packageJson.scripts?.check ?? ''))
 

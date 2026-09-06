@@ -1,35 +1,17 @@
 /** Plugin-owned OpenAI Codex account controls used inside Plugin configuration. */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState, useSyncExternalStore, useId } from 'react'
 import type { CSSProperties } from 'react'
-import type { SettingsScope } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { OpenAICodexUsage } from '../usage.ts'
 import type { OpenAICodexSettingsConfig } from '../settings-contract.ts'
-import {
-  OPENAI_CODEX_AUTH_LOGIN_PATH,
-  OPENAI_CODEX_AUTH_LOGOUT_PATH,
-  OPENAI_CODEX_AUTH_STATUS_PATH,
-} from '../auth-paths.ts'
+import { OpenAICodexAccountStore } from './account-store.ts'
+import type { AccountStatus, AccountSnapshot } from './account-store.ts'
 import type { OpenAICodexSettingsKey } from './locales.ts'
 import { OpenAICodexConfiguration } from './OpenAICodexConfiguration.tsx'
+import type { OpenAICodexSettingsModule } from './OpenAICodexConfiguration.tsx'
 import { OpenAICodexUpdateSettings } from './OpenAICodexUpdateNotice.tsx'
 import type { OpenAICodexUpdateStore } from './update-store.ts'
-
-const POLL_INTERVAL_MS = 1_000
-const USAGE_POLL_INTERVAL_MS = 60_000
-
-type AccountStatus =
-  | { status: 'loading' }
-  | { status: 'signed-out' }
-  | { status: 'signing-in' }
-  | { status: 'reauth-required'; message: string }
-  | { status: 'signed-in'; usage: OpenAICodexUsage; quotaError?: string }
-  | { status: 'remote-web-origin-not-trusted' }
-  | { status: 'error'; message: string }
-
-interface LoginChallenge {
-  url: string
-}
 
 /** Dependencies injected by the browser plugin entry. */
 export interface OpenAICodexSettingsInjected {
@@ -39,12 +21,16 @@ export interface OpenAICodexSettingsInjected {
   configScope: SettingsScope<OpenAICodexSettingsConfig>
   /** Shared browser update state used by the global overlay and this card. */
   updater?: OpenAICodexUpdateStore
+  /** Shared across Models and Plugin settings by the browser-plugin owner. */
+  account?: OpenAICodexAccountStore
 }
 
 /** Props delivered by the settings slot renderer. */
 export type OpenAICodexSettingsProps = Partial<OpenAICodexSettingsInjected> & {
   /** Omit the page heading and outer card chrome inside Plugin configuration. */
   embedded?: boolean
+  /** Models exposes account controls only; advanced options remain under Plugins. */
+  accountOnly?: boolean
 }
 
 const pageStyle: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 720 }
@@ -64,6 +50,20 @@ const quotaTitleStyle: CSSProperties = { margin: 0, fontSize: 14, lineHeight: '2
 const quotaLabelStyle: CSSProperties = { display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13, lineHeight: '20px', color: 'var(--dsw-alias-label-secondary)' }
 const progressTrackStyle: CSSProperties = { height: 8, overflow: 'hidden', borderRadius: 999, background: 'var(--dsw-alias-bg-layer-2, rgba(0, 0, 0, 0.08))' }
 const commandStyle: CSSProperties = { margin: 0, padding: '10px 12px', overflowX: 'auto', borderRadius: 8, background: 'var(--dsw-alias-bg-layer-2, rgba(0, 0, 0, 0.06))', color: 'var(--dsw-alias-label-primary)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 13, lineHeight: '20px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }
+const accountPanelStyle: CSSProperties = { overflow: 'hidden', border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 10 }
+const accountRowStyle: CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, padding: '12px 14px', borderTop: '1px solid var(--dsw-alias-border-l2)' }
+const accountIdentityStyle: CSSProperties = { minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }
+const accountBadgeStyle: CSSProperties = { display: 'inline-flex', marginLeft: 7, padding: '1px 7px', borderRadius: 999, background: 'var(--dsw-alias-state-success-secondary, rgba(34, 160, 107, 0.12))', color: 'var(--dsw-alias-state-success-primary, #087a41)', fontSize: 11, lineHeight: '18px', fontWeight: 600 }
+const dangerButtonStyle: CSSProperties = { ...buttonStyle, color: 'var(--dsw-alias-state-error-primary, #d92d20)' }
+const moduleTabsStyle: CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8, paddingTop: 2 }
+const moduleTabStyle: CSSProperties = { ...buttonStyle, minWidth: 0, minHeight: 54, borderRadius: 10, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'center', gap: 2, overflowWrap: 'anywhere' }
+const activeModuleTabStyle: CSSProperties = { ...moduleTabStyle, border: '1px solid var(--dsw-alias-button-primary-fill)', background: 'var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-layer-1))' }
+const moduleSummaryStyle: CSSProperties = { fontSize: 11, lineHeight: '16px', fontWeight: 400, color: 'var(--dsw-alias-label-secondary)' }
+const SETTINGS_MODULES = ['account', 'models', 'network', 'capabilities'] as const satisfies readonly OpenAICodexSettingsModule[]
+const UNAVAILABLE_CONFIG_SNAPSHOT = {
+  status: 'unavailable' as const, value: undefined, base: undefined, user: undefined,
+  revision: undefined, writable: false, mode: 'memory' as const,
+}
 
 function progressFillStyle(percent: number): CSSProperties {
   return {
@@ -127,7 +127,9 @@ function QuotaBar({
   )
 }
 
-function UsageLimits({ usage, quotaError, t }: {
+/** Quota rows shared by Models and Plugin settings. */
+export function UsageLimits({ usage, quotaError, t, heading = true }: {
+  heading?: boolean
   usage: OpenAICodexUsage
   quotaError?: string
   t: OpenAICodexSettingsInjected['t']
@@ -135,7 +137,7 @@ function UsageLimits({ usage, quotaError, t }: {
   const hasData = usage.rateLimits.length > 0 || usage.credits !== undefined || usage.individualLimit !== undefined
   return (
     <div style={quotaListStyle}>
-      <h3 style={quotaTitleStyle}>{t('usageLimits')}</h3>
+      {heading ? <h3 style={quotaTitleStyle}>{t('usageLimits')}</h3> : null}
       {usage.rateLimits.map(limit => (
         <div key={limit.id} style={quotaGroupStyle}>
           {limit.windows.map(window => (
@@ -176,7 +178,8 @@ function UsageLimits({ usage, quotaError, t }: {
   )
 }
 
-function dotStyle(status: AccountStatus['status']): CSSProperties {
+/** Account indicator colors shared by the compact row and expanded controls. */
+export function dotStyle(status: AccountStatus['status']): CSSProperties {
   const color = status === 'signed-in'
     ? 'var(--dsw-alias-state-success-primary, #22a06b)'
     : status === 'error' || status === 'reauth-required' || status === 'remote-web-origin-not-trusted'
@@ -187,207 +190,275 @@ function dotStyle(status: AccountStatus['status']): CSSProperties {
   return { width: 9, height: 9, borderRadius: '50%', flex: '0 0 auto', background: color }
 }
 
-class AccountRequestError extends Error {
-  constructor(readonly code: string, message: string) {
-    super(message)
-    this.name = 'AccountRequestError'
-  }
+/** Non-sensitive account state label for either settings presentation. */
+export function accountStatusLabel(status: AccountStatus['status'], t: OpenAICodexSettingsInjected['t']): string {
+  const keys = {
+    'signed-in': 'signedIn', loading: 'loadingAccount', 'signing-in': 'signingIn',
+    'reauth-required': 'reauthRequired', 'remote-web-origin-not-trusted': 'remoteOriginTitle',
+    error: 'requestFailed', 'signed-out': 'signedOut',
+  } as const
+  return t(keys[status])
 }
 
-async function jsonRequest<T>(path: string, method = 'GET', signal?: AbortSignal): Promise<T> {
-  const response = await fetch(path, {
-    method,
-    headers: { accept: 'application/json' },
-    credentials: 'same-origin',
-    ...signal === undefined ? {} : { signal },
-  })
-  const value: unknown = await response.json().catch(() => undefined)
-  if (!response.ok) {
-    const code = typeof value === 'object' && value !== null && 'error' in value && typeof value.error === 'string'
-      ? value.error
-      : `HTTP ${response.status}`
-    throw new AccountRequestError(code, code)
-  }
-  return value as T
+/** Shared OAuth actions; Models uses shorter, task-oriented labels. */
+export function AccountActions({ t, store, snapshot, compact = false }: {
+  t: OpenAICodexSettingsInjected['t']
+  store: OpenAICodexAccountStore
+  snapshot: AccountSnapshot
+  compact?: boolean
+}) {
+  const { status, busy, operation } = snapshot
+  if (status.status === 'loading' || status.status === 'remote-web-origin-not-trusted') return null
+  const authorizing = operation.kind === 'starting-authorization'
+    || operation.kind === 'waiting-authorization'
+    || operation.kind === 'cancelling-authorization'
+    || status.status === 'signing-in'
+  if (authorizing) return <div style={rowStyle}>
+    <button type="button" style={buttonStyle} disabled={busy} onClick={() => { void store.signIn() }}>
+      {busy ? t('working') : t(compact ? 'continueAuthorization' : 'reopenAuthorization')}
+    </button>
+    <button type="button" style={buttonStyle} disabled={busy} onClick={() => { void store.cancel() }}>{t('cancelSignIn')}</button>
+  </div>
+  if (status.status === 'signed-in') return null
+  const retry = status.status === 'error' || status.status === 'reauth-required'
+  const action = retry ? t(compact ? 'reauthorize' : 'loginAgain') : t(compact ? 'authorize' : 'login')
+  return <button type="button" style={primaryButtonStyle} disabled={busy}
+    onClick={() => { void store.signIn() }}>{busy ? t('working') : action}</button>
 }
 
-/** OpenAI Codex account status and OAuth actions. */
-export function OpenAICodexSettings({ t, configScope, updater, embedded = false }: OpenAICodexSettingsProps) {
-  if (t === undefined) throw new Error('OpenAI Codex settings requires its translation function')
-  const [status, setStatus] = useState<AccountStatus>({ status: 'loading' })
-  const [busy, setBusy] = useState(false)
+/** Saved-account summary and explicit account-management actions. */
+export function AccountManager({ t, store, snapshot, quotaExpanded, quotaControlsId, onToggleQuota, compact = false }: {
+  t: OpenAICodexSettingsInjected['t']
+  store: OpenAICodexAccountStore
+  snapshot: AccountSnapshot
+  quotaExpanded?: boolean
+  quotaControlsId?: string
+  onToggleQuota?: () => void
+  compact?: boolean
+}) {
+  const accountsPanelId = useId()
+  const [expanded, setExpanded] = useState(false)
+  const [removeKey, setRemoveKey] = useState<string>()
+  const { accounts, busy, operation, status } = snapshot
+  const active = accounts.find(account => account.active)
+  const removeAccount = accounts.find(account => account.accountKey === removeKey)
+  const replacement = removeAccount?.active === true
+    ? accounts.find(account => account.accountKey !== removeAccount.accountKey)
+    : undefined
+  const authorizing = operation.kind === 'starting-authorization'
+    || operation.kind === 'waiting-authorization'
+    || operation.kind === 'cancelling-authorization'
+    || status.status === 'signing-in'
+
+  useEffect(() => {
+    if (removeKey !== undefined && !accounts.some(account => account.accountKey === removeKey)) setRemoveKey(undefined)
+  }, [accounts, removeKey])
+
+  if (accounts.length === 0) return <AccountActions t={t} store={store} snapshot={snapshot} compact={compact} />
+  return <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div style={rowStyle}>
+      <div style={{ display: 'flex', alignItems: 'center', minWidth: 0, gap: 10 }}>
+        <span aria-hidden="true" style={{ width: 38, height: 38, borderRadius: '50%', display: 'grid', placeItems: 'center', flex: '0 0 auto', background: 'var(--dsw-alias-bg-layer-2, rgba(0, 0, 0, 0.06))', fontWeight: 600 }}>
+          {(active?.displayName.trim()[0] ?? 'C').toUpperCase()}
+        </span>
+        <span style={accountIdentityStyle}>
+          <strong style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{active?.displayName ?? t('accountHeading')}</strong>
+          <span style={bodyStyle}>{active?.maskedEmail === undefined
+            ? t('currentAccountDetail')
+            : `${active.maskedEmail} · ${t('currentAccountDetail')}`}</span>
+        </span>
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        {status.status === 'reauth-required' && !authorizing
+          ? <button type="button" style={primaryButtonStyle} disabled={busy} onClick={() => { void store.signIn() }}>{t('reauthorize')}</button>
+          : null}
+        {authorizing ? <AccountActions t={t} store={store} snapshot={snapshot} compact /> : null}
+        {onToggleQuota === undefined || status.status !== 'signed-in' ? null : (
+          <button type="button" style={buttonStyle} aria-expanded={quotaExpanded} aria-controls={quotaControlsId} onClick={onToggleQuota}>
+            {t(quotaExpanded === true ? 'hideQuota' : 'viewQuota')}
+          </button>
+        )}
+        <button type="button" style={buttonStyle} aria-expanded={expanded} aria-controls={accountsPanelId} onClick={() => { setExpanded(!expanded) }}>
+          {t(expanded ? 'hideAccounts' : 'manageAccounts')}
+        </button>
+      </div>
+    </div>
+    {authorizing ? <p style={bodyStyle}>{t('addingAccountKeepsCurrent')}</p> : null}
+    {expanded ? <div id={accountsPanelId} style={accountPanelStyle}>
+      <div style={{ ...rowStyle, padding: '10px 14px', background: 'var(--dsw-alias-bg-layer-2, rgba(0, 0, 0, 0.04))' }}>
+        <strong>{t('savedAccounts')} · {accounts.length}</strong>
+        <button type="button" style={primaryButtonStyle} disabled={busy || authorizing} onClick={() => { void store.signIn() }}>
+          {operation.kind === 'starting-authorization' ? t('working') : t('addAccount')}
+        </button>
+      </div>
+      {accounts.map(account => <div key={account.accountKey} style={accountRowStyle}>
+        <span style={accountIdentityStyle}>
+          <strong>{account.displayName}{account.active ? <span style={accountBadgeStyle}>{t('currentAccount')}</span> : null}</strong>
+          <span style={bodyStyle}>{account.maskedEmail === undefined
+            ? t(account.active ? 'currentAccountDetail' : 'savedAccountDetail')
+            : `${account.maskedEmail} · ${t(account.active ? 'currentAccountDetail' : 'savedAccountDetail')}`}</span>
+        </span>
+        <span style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          <button type="button" style={buttonStyle} disabled={busy || account.active}
+            onClick={() => { void store.activate(account.accountKey) }}>
+            {operation.kind === 'activating' && operation.accountKey === account.accountKey
+              ? t('working') : t(account.active ? 'usingAccount' : 'useAccount')}
+          </button>
+          <button type="button" style={dangerButtonStyle} disabled={busy} onClick={() => { setRemoveKey(account.accountKey) }}>
+            {t('removeAccount')}
+          </button>
+        </span>
+      </div>)}
+      <div style={{ ...rowStyle, padding: '10px 14px', borderTop: '1px solid var(--dsw-alias-border-l2)' }}>
+        <span style={bodyStyle}>{t('activeAccountHelp')}</span>
+        <button type="button" style={dangerButtonStyle} disabled={busy} onClick={() => { void store.signOut() }}>
+          {operation.kind === 'signing-out' ? t('working') : t('signOutAll')}
+        </button>
+      </div>
+    </div> : null}
+    {removeAccount === undefined ? null : <section role="region" aria-live="polite" aria-label={t('removeAccountTitle', { name: removeAccount.displayName })}
+      style={{ padding: 14, border: '1px solid var(--dsw-alias-state-error-primary, #d92d20)', borderRadius: 10 }}>
+      <strong>{t('removeAccountTitle', { name: removeAccount.displayName })}</strong>
+      <p style={{ ...bodyStyle, marginTop: 5 }}>{accounts.length === 1
+        ? t('removeLastAccountCopy')
+        : replacement === undefined ? t('removeAccountCopy') : t('removeActiveAccountCopy', { name: replacement.displayName })}</p>
+      <div style={{ ...rowStyle, justifyContent: 'flex-end' }}>
+        <button type="button" style={buttonStyle} onClick={() => { setRemoveKey(undefined) }}>{t('cancel')}</button>
+        <button type="button" style={dangerButtonStyle} disabled={busy} onClick={() => {
+          void store.remove(removeAccount.accountKey, replacement?.accountKey)
+        }}>{operation.kind === 'removing' ? t('working') : t('confirmRemove')}</button>
+      </div>
+    </section>}
+  </div>
+}
+
+/** Recovery links, errors and trusted-origin guidance in either account entry. */
+export function AccountFeedback({ t, snapshot }: {
+  t: OpenAICodexSettingsInjected['t']
+  snapshot: AccountSnapshot
+}) {
+  const { status, loginUrl, operationError } = snapshot
   const [copied, setCopied] = useState(false)
   const [copyFailed, setCopyFailed] = useState(false)
-  const [loginUrl, setLoginUrl] = useState<string>()
-  const mounted = useRef(true)
-
   const trustedOriginCommand = `dsh plugin --profile web exec dsh-codex-connect trust-origin ${window.location.origin}`
-
-  useEffect(() => {
-    mounted.current = true
-    return () => { mounted.current = false }
-  }, [])
-
-  const refresh = useCallback(async (signal?: AbortSignal) => {
-    try {
-      const nextStatus = await jsonRequest<AccountStatus>(OPENAI_CODEX_AUTH_STATUS_PATH, 'GET', signal)
-      if (mounted.current && signal?.aborted !== true) setStatus(nextStatus)
-    } catch (error: unknown) {
-      if (mounted.current && signal?.aborted !== true) {
-        setStatus(error instanceof AccountRequestError && error.code === 'remote-web-origin-not-trusted'
-          ? { status: 'remote-web-origin-not-trusted' }
-          : { status: 'error', message: error instanceof Error ? error.message : t('requestFailed') })
-      }
-    }
-  }, [t])
-
-  useEffect(() => {
-    const controller = new AbortController()
-    void refresh(controller.signal)
-    return () => { controller.abort() }
-  }, [refresh])
-  useEffect(() => {
-    const interval = status.status === 'signing-in'
-      ? POLL_INTERVAL_MS
-      : status.status === 'signed-in' ? USAGE_POLL_INTERVAL_MS : undefined
-    if (interval === undefined) return
-    const controller = new AbortController()
-    const timer = window.setInterval(() => { void refresh(controller.signal) }, interval)
-    return () => {
-      window.clearInterval(timer)
-      controller.abort()
-    }
-  }, [refresh, status.status])
-
-  useEffect(() => {
-    if (status.status !== 'signing-in') setLoginUrl(undefined)
-  }, [status.status])
-
-  const signIn = async (): Promise<void> => {
-    const popup = window.open('about:blank', '_blank')
-    if (popup !== null) popup.opener = null
-    setBusy(true)
-    setStatus({ status: 'signing-in' })
-    try {
-      const challenge = await jsonRequest<LoginChallenge>(OPENAI_CODEX_AUTH_LOGIN_PATH, 'POST')
-      if (!mounted.current) {
-        popup?.close()
-        return
-      }
-      if (popup !== null) {
-        setLoginUrl(undefined)
-        popup.location.replace(challenge.url)
-      } else {
-        setLoginUrl(challenge.url)
-      }
-    } catch (error: unknown) {
-      popup?.close()
-      setLoginUrl(undefined)
-      if (mounted.current) {
-        setStatus(error instanceof AccountRequestError && error.code === 'remote-web-origin-not-trusted'
-          ? { status: 'remote-web-origin-not-trusted' }
-          : { status: 'error', message: error instanceof Error ? error.message : t('requestFailed') })
-      }
-    } finally {
-      if (mounted.current) setBusy(false)
-    }
-  }
 
   const copyTrustedOriginCommand = async (): Promise<void> => {
     setCopyFailed(false)
     try {
       if (navigator.clipboard?.writeText === undefined) throw new Error('clipboard unavailable')
       await navigator.clipboard.writeText(trustedOriginCommand)
-      if (mounted.current) setCopied(true)
+      setCopied(true)
     } catch {
-      if (mounted.current) setCopyFailed(true)
+      setCopyFailed(true)
     }
   }
 
-  const signOut = async (): Promise<void> => {
-    setBusy(true)
-    try {
-      await jsonRequest<{ ok: true }>(OPENAI_CODEX_AUTH_LOGOUT_PATH, 'POST')
-      if (mounted.current) setStatus({ status: 'signed-out' })
-    } catch (error: unknown) {
-      if (mounted.current) {
-        setStatus({ status: 'error', message: error instanceof Error ? error.message : t('requestFailed') })
-      }
-    } finally {
-      if (mounted.current) setBusy(false)
-    }
-  }
+  return <>
+    {loginUrl === undefined ? null : (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 10 }}>
+        <p style={bodyStyle}>{t('authorizationHelp')}</p>
+        <a
+          href={loginUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ ...primaryButtonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}
+        >
+          {t('openLoginInBrowser')}
+        </a>
+      </div>
+    )}
+    {status.status === 'error' || status.status === 'reauth-required'
+      ? <p style={errorStyle}>{status.message}</p>
+      : null}
+    {operationError === undefined ? null : <p style={errorStyle}>{operationError}</p>}
+    {status.status === 'remote-web-origin-not-trusted' ? (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <p style={errorStyle}>{t('remoteOriginDescription')}</p>
+        <p style={bodyStyle}>{t('remoteOriginCommandHelp')}</p>
+        <code style={commandStyle}>{trustedOriginCommand}</code>
+        <div style={rowStyle}>
+          <button type="button" style={buttonStyle} onClick={() => { void copyTrustedOriginCommand() }}>
+            {copied ? t('remoteOriginCopied') : t('remoteOriginCopy')}
+          </button>
+          {copyFailed ? <span style={errorStyle}>{t('remoteOriginCopyFailed')}</span> : null}
+        </div>
+      </div>
+    ) : null}
+  </>
+}
 
-  const label = status.status === 'signed-in'
-    ? t('signedIn')
-    : status.status === 'loading'
-      ? t('loadingAccount')
-      : status.status === 'signing-in'
-      ? t('signingIn')
-      : status.status === 'reauth-required'
-        ? t('reauthRequired')
-      : status.status === 'remote-web-origin-not-trusted'
-        ? t('remoteOriginTitle')
-      : status.status === 'error'
-        ? t('requestFailed')
-        : t('signedOut')
+/** OpenAI Codex account status and OAuth actions. */
+export function OpenAICodexSettings({ t, configScope, updater, account, embedded = false, accountOnly = false }: OpenAICodexSettingsProps) {
+  if (t === undefined) throw new Error('OpenAI Codex settings requires its translation function')
+  const [localAccount] = useState(() => new OpenAICodexAccountStore())
+  const store = account ?? localAccount
+  const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot)
+  const subscribeConfig = useCallback((listener: () => void) => configScope?.subscribe(listener) ?? (() => undefined), [configScope])
+  const getConfigSnapshot = useCallback(() => configScope?.getSnapshot() ?? UNAVAILABLE_CONFIG_SNAPSHOT, [configScope])
+  const configSnapshot = useSyncExternalStore(subscribeConfig, getConfigSnapshot, getConfigSnapshot)
+  const { status } = snapshot
+  const titleId = useId()
+  const [activeModule, setActiveModule] = useState<OpenAICodexSettingsModule>('account')
+  const panelIdPrefix = `${titleId}-module`
+
+  const label = accountStatusLabel(status.status, t)
+  const moduleSummary = (module: OpenAICodexSettingsModule): string => {
+    if (module === 'account') return t('accountModuleSummary', { status: label })
+    const config = configSnapshot.value
+    if (module === 'models') return config?.models === undefined
+      ? t('modelsModuleDefault')
+      : t('modelsModuleSelected', { count: config.models.length })
+    if (module === 'network') return t(config?.enableProxy === true ? 'networkModuleProxy' : 'networkModuleDirect')
+    const count = config === undefined ? 0 : [config.enableSearch, config.enableImageTool, config.enableImageGeneration, config.enableAutoReview].filter(Boolean).length
+    return t('capabilitiesModuleEnabled', { count })
+  }
 
   return (
     <section
       style={embedded ? embeddedPageStyle : pageStyle}
-      {...embedded ? { 'aria-label': t('title') } : { 'aria-labelledby': 'openai-codex-settings-title' }}
+      {...embedded ? { 'aria-label': t('title') } : { 'aria-labelledby': titleId }}
     >
       {embedded ? null : (
         <div>
-          <h2 id="openai-codex-settings-title" style={titleStyle}>{t('title')}</h2>
+          <h2 id={titleId} style={titleStyle}>{t('title')}</h2>
           <p style={{ ...bodyStyle, marginTop: 6 }}>{t('intro')}</p>
         </div>
       )}
       <div style={embedded ? embeddedCardStyle : cardStyle}>
-        {updater === undefined ? null : <OpenAICodexUpdateSettings t={t} updater={updater} />}
+        {accountOnly || updater === undefined ? null : <OpenAICodexUpdateSettings t={t} updater={updater} />}
+        {accountOnly ? null : (
+          <div style={moduleTabsStyle} role="tablist" aria-label={t('settingsModules')}>
+            {SETTINGS_MODULES.map((module, index) => (
+              <button key={module} id={`${panelIdPrefix}-${module}-tab`} type="button" role="tab"
+                aria-label={t(`${module}Module`)}
+                aria-selected={activeModule === module} aria-controls={`${panelIdPrefix}-${module}`}
+                tabIndex={activeModule === module ? 0 : -1}
+                style={activeModule === module ? activeModuleTabStyle : moduleTabStyle}
+                onClick={() => { setActiveModule(module) }}
+                onKeyDown={event => {
+                  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+                  event.preventDefault()
+                  const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? SETTINGS_MODULES.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + SETTINGS_MODULES.length) % SETTINGS_MODULES.length
+                  const next = SETTINGS_MODULES[nextIndex]!
+                  setActiveModule(next)
+                  document.getElementById(`${panelIdPrefix}-${next}-tab`)?.focus()
+                }}>
+                <span>{t(`${module}Module`)}</span>
+                <span style={moduleSummaryStyle}>{moduleSummary(module)}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        <div id={`${panelIdPrefix}-account`} role={accountOnly ? undefined : 'tabpanel'} aria-labelledby={accountOnly ? undefined : `${panelIdPrefix}-account-tab`} hidden={!accountOnly && activeModule !== 'account'} style={{ display: accountOnly || activeModule === 'account' ? 'flex' : 'none', flexDirection: 'column', gap: 14 }}>
         <h3 style={quotaTitleStyle}>{t('accountHeading')}</h3>
         <div style={rowStyle}>
           <div style={statusStyle} role="status">
             <span aria-hidden="true" style={dotStyle(status.status)} />
             <span>{label}</span>
           </div>
-          {status.status === 'loading' || status.status === 'remote-web-origin-not-trusted'
-            ? null
-            : status.status === 'signed-in'
-            ? <button type="button" style={buttonStyle} disabled={busy} onClick={() => { void signOut() }}>{busy ? t('working') : t('logout')}</button>
-            : status.status === 'signing-in' && loginUrl !== undefined
-            ? null
-            : <button type="button" style={primaryButtonStyle} disabled={busy} onClick={() => { void signIn() }}>{busy ? t('working') : status.status === 'error' || status.status === 'reauth-required' ? t('loginAgain') : t('login')}</button>}
         </div>
-        {loginUrl === undefined ? null : (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 10 }}>
-            <p style={bodyStyle}>{t('popupBlockedFallback')}</p>
-            <a
-              href={loginUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ ...primaryButtonStyle, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}
-            >
-              {t('openLoginInBrowser')}
-            </a>
-          </div>
-        )}
-        {status.status === 'error' || status.status === 'reauth-required'
-          ? <p style={errorStyle}>{status.message}</p>
-          : null}
-        {status.status === 'remote-web-origin-not-trusted' ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <p style={errorStyle}>{t('remoteOriginDescription')}</p>
-            <p style={bodyStyle}>{t('remoteOriginCommandHelp')}</p>
-            <code style={commandStyle}>{trustedOriginCommand}</code>
-            <div style={rowStyle}>
-              <button type="button" style={buttonStyle} onClick={() => { void copyTrustedOriginCommand() }}>
-                {copied ? t('remoteOriginCopied') : t('remoteOriginCopy')}
-              </button>
-              {copyFailed ? <span style={errorStyle}>{t('remoteOriginCopyFailed')}</span> : null}
-            </div>
-          </div>
-        ) : null}
+        <AccountManager t={t} store={store} snapshot={snapshot} />
+        <AccountFeedback t={t} snapshot={snapshot} />
         {status.status === 'signed-in'
           ? <UsageLimits
               usage={status.usage}
@@ -395,10 +466,14 @@ export function OpenAICodexSettings({ t, configScope, updater, embedded = false 
               t={t}
             />
           : null}
-        <OpenAICodexConfiguration
+        {accountOnly ? <p style={bodyStyle}>{t('modelsAccountHelp')}</p> : null}
+        </div>
+        {accountOnly ? null : <OpenAICodexConfiguration
           t={t}
+          activeModule={activeModule}
+          panelIdPrefix={panelIdPrefix}
           {...configScope === undefined ? {} : { scope: configScope }}
-        />
+        />}
       </div>
     </section>
   )

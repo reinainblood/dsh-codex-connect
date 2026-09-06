@@ -8,6 +8,8 @@ import {
   OPENAI_CODEX_REQUEST_IMAGE_MAX_BYTES,
   OPENAI_CODEX_REQUEST_IMAGE_PIXEL_BUDGET,
   OPENAI_CODEX_TRANSPORT,
+  OPENAI_CODEX_ASTRA_MODEL_ID,
+  withOpenAICodexAstra,
   withOpenAICodexContextWindowOverrides,
 } from '../src/adapter.ts'
 import type { OpenAICodexCredentialStore } from '../src/store.ts'
@@ -15,6 +17,31 @@ import { OPENAI_CODEX_PROVIDER } from '../src/store.ts'
 import { Config } from '../src/index.ts'
 
 describe('OpenAI Codex rc.2 adapter profile', () => {
+  it('adds Astra exactly once while preserving upstream ownership when it appears', () => {
+    const provider = openaiCodexProvider()
+    const withoutAstra = {
+      ...provider,
+      getModels: () => provider.getModels().filter(model => model.id !== OPENAI_CODEX_ASTRA_MODEL_ID),
+    }
+    const patched = withOpenAICodexAstra(withoutAstra)
+    const astra = patched.getModels().filter(model => model.id === OPENAI_CODEX_ASTRA_MODEL_ID)
+
+    expect(astra).toEqual([expect.objectContaining({
+      name: 'GPT-6-Astra',
+      api: 'openai-codex-responses',
+      provider: OPENAI_CODEX_PROVIDER,
+      input: ['text', 'image'],
+      contextWindow: 272_000,
+      maxTokens: 128_000,
+    })])
+
+    const upstreamAstra = { ...astra[0]!, name: 'Upstream Astra', contextWindow: 300_000 }
+    const upstreamProvider = { ...provider, getModels: () => [upstreamAstra, ...withoutAstra.getModels()] }
+    const preserved = withOpenAICodexAstra(upstreamProvider)
+    expect(preserved).toBe(upstreamProvider)
+    expect(preserved.getModels()[0]).toBe(upstreamAstra)
+  })
+
   it('distinguishes an omitted model list from an explicitly empty list', () => {
     expect(Config({}).models).toBeUndefined()
     expect(Config({ models: [] }).models).toEqual([])
@@ -61,7 +88,13 @@ describe('OpenAI Codex rc.2 adapter profile', () => {
       {} as OpenAICodexCredentialStore,
       () => undefined,
     )
-    await expect(adapter.listModels(OPENAI_CODEX_PROVIDER)).resolves.toHaveLength(openAICodexModelCatalog().length)
+    const listed = await adapter.listModels(OPENAI_CODEX_PROVIDER)
+    expect(listed).toHaveLength(openAICodexModelCatalog().length)
+    expect(listed).toContainEqual(expect.objectContaining({ id: OPENAI_CODEX_ASTRA_MODEL_ID }))
+    await expect(adapter.resolveModel(OPENAI_CODEX_PROVIDER, OPENAI_CODEX_ASTRA_MODEL_ID)).resolves.toMatchObject({
+      provider: OPENAI_CODEX_PROVIDER,
+      id: OPENAI_CODEX_ASTRA_MODEL_ID,
+    })
   })
 })
 
@@ -81,26 +114,26 @@ describe('context-window overrides', () => {
     const baseline = openaiCodexProvider().getModels()
     const target = baseline.find(model => model.id.includes('gpt-5.6')) ?? baseline[0]!
     const other = baseline.find(model => model.id !== target.id)!
-    const overrides = { [target.id]: 1_050_000 }
+    const overrides = { [target.id]: 350_000 }
     const profile = createOpenAICodexProfile(openaiCodexProvider(), undefined, undefined, undefined, overrides)
 
     const listed = profile.piProvider.getModels()
-    expect(listed.find(model => model.id === target.id)?.contextWindow).toBe(1_050_000)
+    expect(listed.find(model => model.id === target.id)?.contextWindow).toBe(350_000)
     expect(listed.find(model => model.id === other.id)?.contextWindow).toBe(other.contextWindow)
   })
 
   it('accepts a contextWindowOverrides config section', () => {
-    expect(Config({ contextWindowOverrides: { 'gpt-5.6-sol': 1_050_000 } }).contextWindowOverrides)
-      .toEqual({ 'gpt-5.6-sol': 1_050_000 })
+    expect(Config({ contextWindowOverrides: { 'gpt-5.6-sol': 350_000 } }).contextWindowOverrides)
+      .toEqual({ 'gpt-5.6-sol': 350_000 })
     expect(Config({}).contextWindowOverrides).toBeUndefined()
   })
 
   it('withOpenAICodexContextWindowOverrides does not mutate the baseline provider', () => {
     const provider = openaiCodexProvider()
     const baseline = provider.getModels()
-    const overridden = withOpenAICodexContextWindowOverrides(provider, { [baseline[0]!.id]: 999_999 })
+    const overridden = withOpenAICodexContextWindowOverrides(provider, { [baseline[0]!.id]: 100_000 })
 
-    expect(overridden.getModels()[0]!.contextWindow).toBe(999_999)
+    expect(overridden.getModels()[0]!.contextWindow).toBe(100_000)
     expect(provider.getModels()[0]!.contextWindow).toBe(baseline[0]!.contextWindow)
   })
 

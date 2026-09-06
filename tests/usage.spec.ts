@@ -28,9 +28,9 @@ function response(value: unknown, status = 200): Response {
   })
 }
 
-function payload(): unknown {
+function payload(planType: unknown = 'business'): unknown {
   return {
-    plan_type: 'business',
+    plan_type: planType,
     rate_limit: {
       allowed: true,
       limit_reached: false,
@@ -100,6 +100,16 @@ describe('OpenAI Codex usage', () => {
       },
     })
   })
+
+  it.each(['plus', 'pro', 'business', 'team', undefined, null])(
+    'preserves server-returned windows without guessing semantics for the %s plan', planType => {
+      const parsed = parseOpenAICodexUsage(payload(planType))
+      expect(parsed.rateLimits[0]?.windows).toEqual([
+        { remainingPercent: 87, windowSeconds: 604_800 },
+        { remainingPercent: 59.5, windowSeconds: 18_000 },
+      ])
+    },
+  )
 
   it('rejects percentages that would make a quota bar misleading', () => {
     expect(() => parseOpenAICodexUsage({
@@ -177,6 +187,41 @@ describe('OpenAI Codex usage', () => {
         'cache-control': 'no-store',
       },
     })
+  })
+
+  it('keeps the access token paired with its account when the active account switches', async () => {
+    const store = await authenticatedStore()
+    await store.modify(OPENAI_CODEX_PROVIDER, () => Promise.resolve({
+      type: 'oauth',
+      access: 'second-access-secret',
+      refresh: 'second-refresh-secret',
+      expires: Date.now() + 3_600_000,
+      accountId: 'account-2',
+    }))
+    const accounts = await store.accounts()
+    const first = accounts.find(account => !account.active)
+    const second = accounts.find(account => account.active)
+    if (first === undefined || second === undefined) throw new Error('two account fixtures were not created')
+    await store.activate(first.accountKey)
+
+    const read = store.read.bind(store)
+    let firstRead = true
+    store.read = async (...args) => {
+      const credential = await read(...args)
+      if (firstRead) {
+        firstRead = false
+        await store.activate(second.accountKey)
+      }
+      return credential
+    }
+    const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => response(payload()))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await readOpenAICodexRateLimits(store)
+
+    const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers)
+    expect(headers.get('authorization')).toBe('Bearer access-secret')
+    expect(headers.get('chatgpt-account-id')).toBe('account-1')
   })
 
   it.each([401, 403])('throws a secret-free reauthorization error for usage HTTP %s', async status => {

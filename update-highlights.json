@@ -68,6 +68,34 @@
     {
       "version": "0.1.0-alpha.4.21",
       "highlights": ["image-generation"]
+    },
+    {
+      "version": "0.1.0-alpha.4.22",
+      "highlights": ["runtime-compatibility", "models-account", "context-budget"]
+    },
+    {
+      "version": "0.1.0-alpha.4.23",
+      "highlights": ["auto-review-probe"]
+    },
+    {
+      "version": "0.1.0-alpha.4.24",
+      "highlights": ["runtime-compatibility", "auto-review", "proxy-connection"]
+    },
+    {
+      "version": "0.1.0-alpha.4.25",
+      "highlights": ["runtime-compatibility"]
+    },
+    {
+      "version": "0.1.0-alpha.4.26",
+      "highlights": ["runtime-compatibility"]
+    },
+    {
+      "version": "0.1.0-alpha.4.27",
+      "highlights": ["astra-compatibility", "multi-account", "search-route", "proxy-connection"]
+    },
+    {
+      "version": "0.1.0-alpha.4.28",
+      "highlights": []
     }
   ]
 }

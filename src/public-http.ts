@@ -2,12 +2,16 @@
 
 import { lookup } from 'node:dns/promises'
 import type { LookupAddress } from 'node:dns'
-import { request as requestHttp } from 'node:http'
+import { createRequire } from 'node:module'
 import type { IncomingMessage } from 'node:http'
-import { request as requestHttps } from 'node:https'
 import { basename } from 'node:path'
 import { BlockList, isIP } from 'node:net'
 import type { LookupFunction } from 'node:net'
+
+// Avoid Node 26's eager Undici initialization while linking node:http's ESM facade.
+const require = createRequire(import.meta.url)
+const { request: requestHttp } = require('node:http') as typeof import('node:http')
+const { request: requestHttps } = require('node:https') as typeof import('node:https')
 
 /** Maximum time one DNS-plus-HTTP hop may occupy. */
 export const PUBLIC_HTTP_HOP_TIMEOUT_MS = 30_000

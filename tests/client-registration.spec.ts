@@ -2,6 +2,16 @@ import { readFile } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 
 describe('OpenAI Codex browser contribution', () => {
+  it('adds an optional Models footer using the same account owner as Plugins', async () => {
+    const client = await readFile(new URL('../src/client/index.tsx', import.meta.url), 'utf8')
+    expect(client).toContain("ctx.slots.inject('settings.models.footer'")
+    expect(client).toContain("id: 'dsh-codex-connect-account'")
+    expect(client).toContain('({ t, configScope, updater, account })')
+    expect(client).toContain('inject: () => ({ t, account, configScope })')
+    expect(client).toContain('account.dispose()')
+    expect(client.match(/new OpenAICodexAccountStore\(\)/g)).toHaveLength(1)
+    expect(client).not.toContain("ctx.slots.inject('settings.models.provider-card'")
+  })
   it('registers as a Plugin configuration card instead of adding a tab or section', async () => {
     const client = await readFile(new URL('../src/client/index.tsx', import.meta.url), 'utf8')
     expect(client).toContain("ctx.slots.inject('settings.plugin.item'")
@@ -11,6 +21,7 @@ describe('OpenAI Codex browser contribution', () => {
     expect(client).not.toContain('order: 30')
     expect(client).toContain('ctx.settingsScope.bind')
     expect(client).toContain('OPENAI_CODEX_SETTINGS_NAMESPACE')
+    expect(client).not.toContain("namespace: 'web'")
     expect(client).not.toContain("ctx.slots.inject('settings.plugins.tab'")
     expect(client).not.toContain("ctx.slots.inject('settings.section'")
   })

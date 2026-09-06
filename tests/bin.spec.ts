@@ -40,6 +40,13 @@ afterEach(async () => {
 })
 
 describe('dsh-codex-connect CLI', () => {
+  it('does not print opaque refresh response secrets', async () => {
+    mocked.login.mockRejectedValue(new Error('Invalid response: {"refresh_token":"opaque-fixture-secret"}'))
+    let output = ''
+    vi.spyOn(process.stderr, 'write').mockImplementation(chunk => { output += String(chunk); return true })
+    await expect(run(['login'])).resolves.toBe(1)
+    expect(output).not.toContain('opaque-fixture-secret')
+  })
   it('trusts, lists, and untrusts exact origins through the server CLI', async () => {
     root = await mkdtemp(join(tmpdir(), 'dsh-codex-connect-bin-'))
     vi.stubEnv('DSH_HOME', root)

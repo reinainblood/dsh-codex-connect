@@ -41,6 +41,11 @@ describe('Codex Connect doctor', () => {
     expect(report.credentialFile.state).toBe(process.platform === 'win32' ? 'owner-only' : 'permissions-too-broad')
   })
 
+  it('reports that enabled Codex Search temporarily selects the Harness route', async () => {
+    const report = await diagnoseOpenAICodex({ enableSearch: true })
+    expect(report.capabilities.changesHarnessSearchRoute).toBe(true)
+  })
+
   it('gives a focused migration hint for a provider collision', async () => {
     const failure = () => assertNoOpenAICodexProviderConflict(['deepseek-official', 'openai-codex'])
     expect(failure).toThrow(/legacy dsh-codex bundle or manual openai-codex provider row/)
@@ -60,7 +65,7 @@ describe('Codex Connect doctor', () => {
       },
     })
     expect(report.compatibility.status).toBe('incompatible')
-    expect(report.hints.join('\n')).toMatch(/pin @earendil-works\/pi-ai to 0\.82\.1/)
+    expect(report.hints.join('\n')).toMatch(/@earendil-works\/pi-ai \^0\.84\.2/)
   })
 
   it('reports unknown compatibility without pretending it is supported', async () => {

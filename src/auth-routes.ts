@@ -6,7 +6,7 @@ import type { AuthEvent, AuthPrompt } from '@earendil-works/pi-ai'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { loginOpenAICodex, logoutOpenAICodex, openAICodexAuthStatus } from './auth.ts'
-import type { OpenAICodexCredentialStore } from './store.ts'
+import type { CapturedOpenAICodexAccount, OpenAICodexCredentialStore } from './store.ts'
 import {
   isOpenAICodexReauthRequiredError,
   OPENAI_CODEX_REAUTH_REQUIRED_MESSAGE,
@@ -17,6 +17,8 @@ import {
   OPENAI_CODEX_AUTH_LOGIN_PATH,
   OPENAI_CODEX_AUTH_LOGOUT_PATH,
   OPENAI_CODEX_AUTH_STATUS_PATH,
+  OPENAI_CODEX_AUTH_CANCEL_PATH,
+  OPENAI_CODEX_AUTH_ACCOUNTS_PATH,
 } from './auth-paths.ts'
 import {
   OPENAI_CODEX_TRUSTED_ORIGINS_FILENAME,
@@ -26,16 +28,21 @@ import {
 import { FastModeRegistry, isFastModeSessionId } from './fast-mode.ts'
 import { OPENAI_CODEX_FAST_MODE_PATH } from './fast-mode-paths.ts'
 import type { OpenAICodexProxyManager } from './provider-proxy.ts'
+import { publicAuthError as safeMessage } from './auth-error.ts'
 
 export {
   OPENAI_CODEX_AUTH_LOGIN_PATH,
   OPENAI_CODEX_AUTH_LOGOUT_PATH,
   OPENAI_CODEX_AUTH_STATUS_PATH,
+  OPENAI_CODEX_AUTH_CANCEL_PATH,
+  OPENAI_CODEX_AUTH_ACCOUNTS_PATH,
 } from './auth-paths.ts'
 export { OPENAI_CODEX_FAST_MODE_PATH } from './fast-mode-paths.ts'
 
 /** Maximum time a browser request waits for the provider's authorization URL. */
 export const OPENAI_CODEX_AUTH_URL_TIMEOUT_MS = 30_000
+/** Default deadline for the complete interactive authorization, including the callback. */
+export const OPENAI_CODEX_AUTHORIZATION_TIMEOUT_MS = 600_000
 
 /** Stable, non-sensitive error returned when a browser origin needs CLI trust. */
 export const REMOTE_WEB_ORIGIN_NOT_TRUSTED = 'remote-web-origin-not-trusted'
@@ -54,24 +61,18 @@ interface LoginChallenge {
 /** Testable timing boundary; production uses the exported 30-second ceiling. */
 export interface OpenAICodexWebAuthOptions {
   challengeTimeoutMs?: number
+  /** Complete authorization deadline; supplied by the plugin's oauthTimeoutMs config. */
+  authorizationTimeoutMs?: number | undefined
   /** Owns Codex-only proxy dispatch for login and quota refresh. */
   proxyManager?: OpenAICodexProxyManager | undefined
   /** Resolve the explicitly activated proxy for each operation. */
   resolveProxyUrl?: (() => string | undefined) | undefined
 }
 
-/** Redact provider diagnostics before they cross to the browser. */
-function safeMessage(error: unknown): string {
-  return (error instanceof Error ? error.message : String(error))
-    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/gu, '[redacted token]')
-    .replace(/(\b(?:code|token|refresh_token|access_token)=)[^&\s]+/giu, '$1[redacted]')
-    .slice(0, 1000)
-}
-
 /** Reject with the prompt's abort reason while browser callback owns completion. */
-function waitForPromptAbort(prompt: AuthPrompt): Promise<string> {
-  const signal = prompt.signal
-  if (signal === undefined) return new Promise<string>(() => {})
+function waitForPromptAbort(prompt: AuthPrompt, operationSignal: AbortSignal): Promise<string> {
+  // pi-ai waits for manual input before aborting its prompt signal on cancellation.
+  const signal = prompt.signal === undefined ? operationSignal : AbortSignal.any([prompt.signal, operationSignal])
   if (signal.aborted) return Promise.reject(signal.reason)
   return new Promise<string>((_resolve, reject) => {
     signal.addEventListener('abort', () => { reject(signal.reason) }, { once: true })
@@ -86,7 +87,11 @@ export class OpenAICodexWebAuth {
   private challenge: LoginChallenge | undefined
   private challengeWaiters: Array<{ resolve(value: LoginChallenge): void; reject(error: unknown): void }> = []
   private challengeTimer: ReturnType<typeof setTimeout> | undefined
+  private authorizationTimer: ReturnType<typeof setTimeout> | undefined
+  private transition: Promise<void> | undefined
+  private disposed = false
   private readonly challengeTimeoutMs: number
+  private readonly authorizationTimeoutMs: number
   private readonly proxyManager: OpenAICodexProxyManager | undefined
   private readonly resolveProxyUrl: () => string | undefined
 
@@ -95,22 +100,28 @@ export class OpenAICodexWebAuth {
     options: OpenAICodexWebAuthOptions = {},
   ) {
     this.challengeTimeoutMs = options.challengeTimeoutMs ?? OPENAI_CODEX_AUTH_URL_TIMEOUT_MS
+    this.authorizationTimeoutMs = options.authorizationTimeoutMs ?? OPENAI_CODEX_AUTHORIZATION_TIMEOUT_MS
     this.proxyManager = options.proxyManager
     this.resolveProxyUrl = options.resolveProxyUrl ?? (() => undefined)
     if (!Number.isFinite(this.challengeTimeoutMs) || this.challengeTimeoutMs <= 0) {
       throw new TypeError('OpenAI Codex auth URL timeout must be a positive finite number')
     }
+    if (!Number.isSafeInteger(this.authorizationTimeoutMs) || this.authorizationTimeoutMs <= 0 || this.authorizationTimeoutMs > 2_147_483_647) {
+      throw new TypeError('OpenAI Codex authorization timeout must be a positive timer-safe integer')
+    }
   }
 
   /** Read current public state, consulting durable storage while idle. */
-  async status(): Promise<OpenAICodexWebAuthStatus> {
-    if (this.operation !== undefined) return this.state
+  async status(snapshot?: CapturedOpenAICodexAccount): Promise<OpenAICodexWebAuthStatus> {
+    if (this.operation !== undefined && this.state.status === 'signing-in') return this.state
     if (this.state.status === 'error') return this.state
-    return this.readStoredStatus()
+    return this.readStoredStatus(snapshot)
   }
 
   /** Start or join the current browser-login operation. */
   async signIn(): Promise<LoginChallenge> {
+    while (this.transition !== undefined) await this.transition
+    if (this.disposed) throw new Error('OpenAI Codex plugin disposed')
     if (this.operation === undefined) this.start()
     if (this.challenge !== undefined) return this.challenge
     return new Promise<LoginChallenge>((resolve, reject) => {
@@ -120,17 +131,71 @@ export class OpenAICodexWebAuth {
 
   /** Cancel any callback listener, wait for quiescence, then delete the credential. */
   async signOut(): Promise<void> {
-    this.cancelSignIn(new Error('OpenAI Codex sign-in cancelled'))
-    await this.operation?.catch(() => undefined)
-    await logoutOpenAICodex(this.store)
-    this.challenge = undefined
-    this.state = { status: 'signed-out' }
+    await this.finishLogin('logout')
+  }
+
+  /** Cancel the pending authorization and retain any already stored account. */
+  async cancel(): Promise<void> {
+    await this.finishLogin('cancel')
+  }
+
+  /** Cancel pending OAuth and select one already stored account. */
+  async activateAccount(accountKey: string): Promise<OpenAICodexWebAuthStatus> {
+    return this.mutateStoredAccount(() => this.store.activate(accountKey))
+  }
+
+  /** Cancel pending OAuth and remove exactly one stored account. */
+  async removeAccount(accountKey: string, replacementAccountKey?: string): Promise<OpenAICodexWebAuthStatus> {
+    return this.mutateStoredAccount(() => this.store.removeAccount(accountKey, replacementAccountKey))
   }
 
   /** Stop the owned callback listener during plugin disposal. */
   async dispose(): Promise<void> {
-    this.cancelSignIn(new Error('OpenAI Codex plugin disposed'))
-    await this.operation?.catch(() => undefined)
+    this.disposed = true
+    await this.finishLogin('dispose')
+  }
+
+  private async finishLogin(action: 'cancel' | 'logout' | 'dispose'): Promise<void> {
+    while (this.transition !== undefined) await this.transition
+    const operation = this.operation
+    this.cancelSignIn(new Error(action === 'dispose' ? 'OpenAI Codex plugin disposed' : 'OpenAI Codex sign-in cancelled'))
+    const transition = (async () => {
+      await operation?.catch(() => undefined)
+      this.challenge = undefined
+      if (action === 'logout') {
+        await logoutOpenAICodex(this.store)
+        this.state = { status: 'signed-out' }
+      } else if (action === 'cancel') {
+        this.state = await this.readStoredStatus()
+      }
+    })()
+    this.transition = transition
+    try { await transition } finally {
+      if (this.transition === transition) this.transition = undefined
+    }
+  }
+
+  private async mutateStoredAccount(operation: () => Promise<unknown>): Promise<OpenAICodexWebAuthStatus> {
+    while (this.transition !== undefined) await this.transition
+    if (this.disposed) throw new Error('OpenAI Codex plugin disposed')
+    const login = this.operation
+    this.cancelSignIn(new Error('OpenAI Codex sign-in cancelled'))
+    let result: OpenAICodexWebAuthStatus | undefined
+    const transition = (async () => {
+      await login?.catch(() => undefined)
+      this.challenge = undefined
+      await operation()
+      result = await this.readStoredStatus()
+      this.state = result
+    })()
+    this.transition = transition
+    try {
+      await transition
+      if (result === undefined) throw new Error('openai-codex: account mutation did not produce status')
+      return result
+    } finally {
+      if (this.transition === transition) this.transition = undefined
+    }
   }
 
   private start(): void {
@@ -142,11 +207,15 @@ export class OpenAICodexWebAuth {
       this.cancelSignIn(new Error(`OpenAI Codex did not provide an authorization URL within ${String(this.challengeTimeoutMs)}ms`))
     }, this.challengeTimeoutMs)
     this.challengeTimer.unref()
+    this.authorizationTimer = setTimeout(() => {
+      this.cancelSignIn(new Error('ChatGPT authorization expired. Please sign in again.'))
+    }, this.authorizationTimeoutMs)
+    this.authorizationTimer.unref()
     const login = () => loginOpenAICodex({
       signal: cancellation.signal,
       prompt: prompt => prompt.type === 'select'
         ? Promise.resolve('browser')
-        : waitForPromptAbort(prompt),
+        : waitForPromptAbort(prompt, cancellation.signal),
       notify: event => { this.onEvent(event) },
     }, this.store)
     this.operation = (this.proxyManager?.run(this.resolveProxyUrl(), login) ?? login()).then(
@@ -159,12 +228,15 @@ export class OpenAICodexWebAuth {
         }
         this.state = await this.readStoredStatus()
       },
-      (error: unknown) => {
+      async (error: unknown) => {
         this.rejectChallenge(error)
-        this.state = { status: 'error', message: safeMessage(error) }
+        this.state = await this.statusAfterLoginFailure(error)
       },
     ).finally(() => {
       this.clearChallengeTimer()
+      clearTimeout(this.authorizationTimer)
+      this.authorizationTimer = undefined
+      this.challenge = undefined
       this.operation = undefined
       this.cancellation = undefined
     })
@@ -191,11 +263,12 @@ export class OpenAICodexWebAuth {
     for (const waiter of this.challengeWaiters.splice(0)) waiter.resolve(challenge)
   }
 
-  private async readStoredStatus(): Promise<OpenAICodexWebAuthStatus> {
-    const stored = await openAICodexAuthStatus(this.store)
+  private async readStoredStatus(snapshot?: CapturedOpenAICodexAccount): Promise<OpenAICodexWebAuthStatus> {
+    const credentials = snapshot ?? await this.store.captureActiveAccount()
+    const stored = await openAICodexAuthStatus(credentials)
     if (!stored.authenticated) return { status: 'signed-out' }
     try {
-      const readUsage = () => readOpenAICodexRateLimits(this.store)
+      const readUsage = () => readOpenAICodexRateLimits(credentials)
       return {
         status: 'signed-in',
         usage: await (this.proxyManager?.run(this.resolveProxyUrl(), readUsage) ?? readUsage()),
@@ -205,6 +278,16 @@ export class OpenAICodexWebAuth {
         return { status: 'reauth-required', message: OPENAI_CODEX_REAUTH_REQUIRED_MESSAGE }
       }
       return { status: 'signed-in', usage: { rateLimits: [] }, quotaError: safeMessage(error) }
+    }
+  }
+
+  private async statusAfterLoginFailure(error: unknown): Promise<OpenAICodexWebAuthStatus> {
+    const failure = { status: 'error', message: safeMessage(error) } as const
+    try {
+      const stored = await this.readStoredStatus()
+      return stored.status === 'signed-out' ? failure : stored
+    } catch {
+      return failure
     }
   }
 
@@ -408,6 +491,36 @@ function fastModeBody(value: unknown): { sessionId: string; enabled: boolean } |
     : undefined
 }
 
+function accountKey(value: unknown): string | undefined {
+  return typeof value === 'string' && /^acct_[A-Za-z0-9_-]{43}$/u.test(value) ? value : undefined
+}
+
+function activateAccountBody(value: unknown): { accountKey: string } | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  if (Object.keys(record).length !== 1) return undefined
+  const parsed = accountKey(record['accountKey'])
+  return parsed === undefined ? undefined : { accountKey: parsed }
+}
+
+function removeAccountBody(value: unknown): { accountKey: string; replacementAccountKey?: string } | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  if (Object.keys(record).some(key => key !== 'accountKey' && key !== 'replacementAccountKey')) return undefined
+  const selected = accountKey(record['accountKey'])
+  if (selected === undefined) return undefined
+  if (record['replacementAccountKey'] === undefined) return { accountKey: selected }
+  const replacement = accountKey(record['replacementAccountKey'])
+  return replacement === undefined ? undefined : { accountKey: selected, replacementAccountKey: replacement }
+}
+
+function accountMutationError(error: unknown): { status: number; error: string } {
+  const message = safeMessage(error)
+  if (/account not found/u.test(message)) return { status: 404, error: message }
+  if (/requires replacementAccountKey|only valid when removing/u.test(message)) return { status: 409, error: message }
+  return { status: 500, error: message }
+}
+
 /** Register the plugin-owned OAuth routes when the Web server is composed. */
 export function registerOpenAICodexAuthRoutes(
   ctx: Context,
@@ -416,8 +529,9 @@ export function registerOpenAICodexAuthRoutes(
   fastModeOverride?: FastModeRegistry,
   proxyManager?: OpenAICodexProxyManager,
   resolveProxyUrl?: () => string | undefined,
+  authorizationTimeoutMs?: number,
 ): void {
-  const auth = new OpenAICodexWebAuth(store, { proxyManager, resolveProxyUrl })
+  const auth = new OpenAICodexWebAuth(store, { proxyManager, resolveProxyUrl, authorizationTimeoutMs })
   const storedFilename = (store as OpenAICodexCredentialStore & { filename?: unknown }).filename
   const fastMode = fastModeOverride ?? new FastModeRegistry()
   const trustedOrigins = trustedOriginsOverride ?? (typeof storedFilename === 'string'
@@ -437,7 +551,9 @@ export function registerOpenAICodexAuthRoutes(
         handler: async (req, res) => {
           if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
           if (!await authorize(req, res)) return
-          json(res, 200, await auth.status())
+          const snapshot = await store.captureActiveAccount()
+          const [status, accounts] = await Promise.all([auth.status(snapshot), snapshot.accounts()])
+          json(res, 200, { ...status, accounts })
         },
       }),
       ctx.webServer.register({
@@ -455,6 +571,20 @@ export function registerOpenAICodexAuthRoutes(
       }),
       ctx.webServer.register({
         kind: 'exact',
+        path: OPENAI_CODEX_AUTH_CANCEL_PATH,
+        handler: async (req, res) => {
+          if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+          if (!await authorize(req, res)) return
+          try {
+            await auth.cancel()
+            json(res, 200, await auth.status())
+          } catch (error: unknown) {
+            json(res, 500, { error: safeMessage(error) })
+          }
+        },
+      }),
+      ctx.webServer.register({
+        kind: 'exact',
         path: OPENAI_CODEX_AUTH_LOGOUT_PATH,
         handler: async (req, res) => {
           if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
@@ -464,6 +594,37 @@ export function registerOpenAICodexAuthRoutes(
             json(res, 200, { ok: true })
           } catch (error: unknown) {
             json(res, 500, { error: safeMessage(error) })
+          }
+        },
+      }),
+      ctx.webServer.register({
+        kind: 'exact',
+        path: OPENAI_CODEX_AUTH_ACCOUNTS_PATH,
+        handler: async (req, res) => {
+          if (req.method !== 'GET' && req.method !== 'POST' && req.method !== 'DELETE') {
+            return json(res, 405, { error: 'method not allowed' })
+          }
+          if (!await authorize(req, res)) return
+          if (req.method === 'GET') return json(res, 200, { accounts: await store.accounts() })
+          const type = header(req, 'content-type')
+          if (type === undefined || !/^application\/json(?:\s*;|$)/iu.test(type.trim())) {
+            return json(res, 415, { error: 'unsupported content type' })
+          }
+          try {
+            const raw = await readFastModeBody(req)
+            if (req.method === 'POST') {
+              const body = activateAccountBody(raw)
+              if (body === undefined) return json(res, 400, { error: 'invalid input' })
+              return json(res, 200, await auth.activateAccount(body.accountKey))
+            }
+            const body = removeAccountBody(raw)
+            if (body === undefined) return json(res, 400, { error: 'invalid input' })
+            return json(res, 200, await auth.removeAccount(body.accountKey, body.replacementAccountKey))
+          } catch (error: unknown) {
+            if (error instanceof RangeError) return json(res, 413, { error: 'request body too large' })
+            if (error instanceof TypeError) return json(res, 400, { error: 'invalid input' })
+            const mapped = accountMutationError(error)
+            return json(res, mapped.status, { error: mapped.error })
           }
         },
       }),

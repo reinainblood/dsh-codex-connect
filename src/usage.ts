@@ -1,9 +1,7 @@
 /** Live ChatGPT Codex rate-limit usage for the browser account page. */
 
-import { createModels } from '@earendil-works/pi-ai'
-import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex'
+import { readOpenAICodexRequestAuth } from './auth.ts'
 import type { OpenAICodexCredentialStore } from './store.ts'
-import { OPENAI_CODEX_PROVIDER } from './store.ts'
 
 /** Fixed endpoint used by the official Codex client for ChatGPT rate limits. */
 export const OPENAI_CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage'
@@ -223,14 +221,12 @@ export function parseOpenAICodexUsage(value: unknown): OpenAICodexUsage {
  * @returns current rate-limit buckets safe to expose to the local browser page.
  */
 export async function readOpenAICodexRateLimits(
-  store: OpenAICodexCredentialStore,
+  store: Pick<OpenAICodexCredentialStore, 'captureActiveAccount'>,
 ): Promise<OpenAICodexUsage> {
-  const models = createModels({ credentials: store })
-  models.setProvider(openaiCodexProvider())
-  const auth = await models.getAuth(OPENAI_CODEX_PROVIDER)
-  const credential = await store.read(OPENAI_CODEX_PROVIDER)
-  const access = auth?.auth.apiKey
-  const accountId = credential?.type === 'oauth' ? credential.accountId : undefined
+  const signal = AbortSignal.timeout(USAGE_REQUEST_TIMEOUT_MS)
+  const auth = await readOpenAICodexRequestAuth(store, signal)
+  const access = auth?.access
+  const accountId = auth?.accountId
   if (access === undefined || access.length === 0 || typeof accountId !== 'string' || accountId.length === 0) {
     throw new Error('OpenAI Codex is signed out')
   }
@@ -244,7 +240,7 @@ export async function readOpenAICodexRateLimits(
       'cache-control': 'no-store',
       'user-agent': 'dsh-codex-connect',
     },
-    signal: AbortSignal.timeout(USAGE_REQUEST_TIMEOUT_MS),
+    signal,
   })
   if (!response.ok) {
     if (response.status === 401 || response.status === 403) {

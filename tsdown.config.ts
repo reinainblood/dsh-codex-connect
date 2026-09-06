@@ -13,7 +13,8 @@ const CLIENT_EXTERNALS = [
   '@deepseek-ai/cordis',
   '@deepseek-ai/dsh-api-remotes/client',
   '@deepseek-ai/dsh-client-connection/client',
-  '@deepseek-ai/dsh-client-runtime/client',
+  '@deepseek-ai/dsh-api-session-controller/client',
+  '@deepseek-ai/dsh-client-store',
   '@deepseek-ai/dsh-client-ui-layout/client',
   '@deepseek-ai/dsh-client-ui-attachment',
   '@deepseek-ai/dsh-client-ui-primitives',
@@ -34,6 +35,12 @@ export default [
     fixedExtension: false,
     dts: true,
     clean: true,
+    // Keep dispatcher preservation ahead of external providers' initialization.
+    outputOptions: {
+      codeSplitting: {
+        groups: [{ name: 'undici-runtime', test: /\/src\/undici-runtime\.ts$/u }],
+      },
+    },
     define: {
       __CODEX_CONNECT_VERSION__: JSON.stringify(PACKAGE_VERSION),
     },

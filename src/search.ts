@@ -3,9 +3,7 @@
  * @module dsh-codex-connect/search
  */
 
-import { createModels } from '@earendil-works/pi-ai'
-import type { Models } from '@earendil-works/pi-ai'
-import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex'
+import { readOpenAICodexRequestAuth } from './auth.ts'
 import { WebError } from '@deepseek-ai/dsh-web'
 import type {
   WebSearchProvider,
@@ -34,6 +32,11 @@ export type { OpenAICodexSearchContextSize, OpenAICodexSearchMode } from './sett
 
 /** Stable dsh web-provider id selected by the bundle patch. */
 export const OPENAI_CODEX_SEARCH_PROVIDER = OPENAI_CODEX_PROVIDER
+
+/** Total search deadline, including authentication, headers and body consumption. */
+export const OPENAI_CODEX_SEARCH_TIMEOUT_MS = 30_000
+/** Maximum response bytes retained before parsing search JSON. */
+export const OPENAI_CODEX_SEARCH_MAX_RESPONSE_BYTES = 1024 * 1024
 
 /** Trusted first-party Codex base; OAuth credentials never cross to a configured origin. */
 export const OPENAI_CODEX_BASE_URL = 'https://chatgpt.com/backend-api/codex'
@@ -212,6 +215,28 @@ function abortable<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
   })
 }
 
+/** Read bounded JSON and cancel unfinished response bodies on every failure. */
+async function readSearchJson(response: Response, signal?: AbortSignal): Promise<unknown> {
+  if (response.body === null) throw new Error('Empty search response')
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let size = 0
+  try {
+    while (true) {
+      const { value, done } = await abortable(reader.read(), signal)
+      if (done) break
+      size += value.byteLength
+      if (size > OPENAI_CODEX_SEARCH_MAX_RESPONSE_BYTES) throw new Error('Search response exceeds the byte limit')
+      chunks.push(value)
+    }
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks))) as unknown
+  } finally {
+    // Cancellation may reject after the transport has already failed.
+    void reader.cancel().catch(() => {})
+    reader.releaseLock()
+  }
+}
+
 /** Keep provider diagnostics bounded and remove JWT-like material. */
 function providerMessage(value: unknown): string | undefined {
   if (!isRecord(value)) return undefined
@@ -227,16 +252,11 @@ function providerMessage(value: unknown): string | undefined {
 /** OpenAI Codex standalone-search provider using the same refreshable OAuth store as the LLM route. */
 export class OpenAICodexSearchProvider implements WebSearchProvider {
   readonly id = OPENAI_CODEX_SEARCH_PROVIDER
-  private readonly models: Models
 
   /**
    * @param options - fixed trusted endpoint policy and deployment tunables.
    */
-  constructor(private readonly options: OpenAICodexSearchProviderOptions) {
-    const models = createModels({ credentials: options.credentials })
-    models.setProvider(openaiCodexProvider())
-    this.models = models
-  }
+  constructor(private readonly options: OpenAICodexSearchProviderOptions) {}
 
   /** The local configuration is usable; credential presence is resolved per request. */
   available(): boolean {
@@ -247,21 +267,27 @@ export class OpenAICodexSearchProvider implements WebSearchProvider {
 
   /** @inheritdoc */
   async search(request: WebSearchRequest, signal?: AbortSignal): Promise<WebSearchResult> {
-    const operation = () => this.searchWithoutProxy(request, signal)
-    return this.options.proxyManager?.run(this.options.resolveProxyUrl?.(), operation) ?? operation()
+    throwIfSearchAborted(signal)
+    const deadline = new AbortController()
+    const combined = signal === undefined ? deadline.signal : AbortSignal.any([signal, deadline.signal])
+    const timer = setTimeout(() => { deadline.abort(new DOMException('Search deadline exceeded', 'TimeoutError')) }, OPENAI_CODEX_SEARCH_TIMEOUT_MS)
+    try {
+      const operation = () => this.searchWithoutProxy(request, combined)
+      return await (this.options.proxyManager?.run(this.options.resolveProxyUrl?.(), operation) ?? operation())
+    } finally { clearTimeout(timer) }
   }
 
   private async searchWithoutProxy(request: WebSearchRequest, signal?: AbortSignal): Promise<WebSearchResult> {
     throwIfSearchAborted(signal)
     let auth
     try {
-      auth = await abortable(this.models.getAuth(OPENAI_CODEX_PROVIDER), signal)
+      auth = await abortable(readOpenAICodexRequestAuth(this.options.credentials, signal), signal)
     } catch (error: unknown) {
       throwIfSearchAborted(signal)
       if (isAbortError(error)) throw searchAborted(signal, error)
       throw new WebError('OpenAI Codex search credential resolution failed', 'WEB_PROVIDER_ERROR', { cause: error })
     }
-    const access = auth?.auth.apiKey
+    const access = auth?.access
     if (access === undefined || access.length === 0) {
       throw new WebError('OpenAI Codex search is signed out; run "dsh openai-codex login"', 'WEB_PROVIDER_CREDENTIAL_MISSING')
     }
@@ -289,7 +315,7 @@ export class OpenAICodexSearchProvider implements WebSearchProvider {
 
     let response: Response
     try {
-      response = await fetch(OPENAI_CODEX_SEARCH_URL, {
+      response = await abortable(fetch(OPENAI_CODEX_SEARCH_URL, {
         method: 'POST',
         redirect: 'error',
         headers: {
@@ -301,7 +327,7 @@ export class OpenAICodexSearchProvider implements WebSearchProvider {
         },
         body: JSON.stringify(body),
         ...signal === undefined ? {} : { signal },
-      })
+      }), signal)
     } catch (error: unknown) {
       throwIfSearchAborted(signal)
       if (isAbortError(error)) throw searchAborted(signal, error)
@@ -310,7 +336,7 @@ export class OpenAICodexSearchProvider implements WebSearchProvider {
 
     let payload: unknown
     try {
-      payload = await response.json()
+      payload = await readSearchJson(response, signal)
     } catch (error: unknown) {
       throwIfSearchAborted(signal)
       if (isAbortError(error)) throw searchAborted(signal, error)

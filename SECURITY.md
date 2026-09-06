@@ -41,9 +41,12 @@ provide only the secret-free output requested there.
 - **Browser origin:** Browser OAuth routes use same-origin and loopback checks by
   default. A trusted origin is an explicit opt-in for a network you control;
   never expose the route to the public Internet.
-- **No implicit routing:** Installing or enabling the plugin does not switch the
-  Harness default model or global search provider. Any default-model or search
-  route change must be an explicit, separate Harness configuration change.
+- **Explicit routing changes:** Installing the plugin does not switch the
+  Harness default model or search provider. Explicitly saving `enableSearch: true`
+  selects Codex Search for profile-wide searches. Disabling it or unloading its
+  registration restores the previous search route if Codex still owns that route;
+  a later selection by another owner is preserved. Default-model selection remains
+  a separate, explicit Harness configuration change.
 
 ## Safe diagnostic data
 
